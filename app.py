@@ -594,6 +594,150 @@ elif scenario == "A/B Testing Calculator":
             prior_mean_b = alpha_prior_b / (alpha_prior_b + beta_prior_b)
             st.markdown(f"Prior mean for B: **{prior_mean_b:.2%}**")
     
+    # Add expandable section explaining the impact of priors
+    with st.expander("How do priors impact the analysis?"):
+        st.markdown("### Understanding the Impact of Priors")
+        st.markdown("""
+        The choice between uninformative and informed priors can significantly affect your conclusions, 
+        especially with smaller sample sizes. Let's examine how different priors would impact the current analysis.
+        """)
+        
+        # Calculate what the results would be with an uninformative prior
+        uninform_alpha_post_a = 1 + conversions_a
+        uninform_beta_post_a = 1 + (visitors_a - conversions_a)
+        uninform_alpha_post_b = 1 + conversions_b
+        uninform_beta_post_b = 1 + (visitors_b - conversions_b)
+        
+        uninform_mean_a = uninform_alpha_post_a / (uninform_alpha_post_a + uninform_beta_post_a)
+        uninform_mean_b = uninform_alpha_post_b / (uninform_alpha_post_b + uninform_beta_post_b)
+        
+        # Generate samples with uninformative prior
+        uninform_samples_a = np.random.beta(uninform_alpha_post_a, uninform_beta_post_a, 100000)
+        uninform_samples_b = np.random.beta(uninform_alpha_post_b, uninform_beta_post_b, 100000)
+        uninform_prob_b_better = np.mean(uninform_samples_b > uninform_samples_a)
+        
+        # Calculate what the results would be with a stronger informed prior
+        # Using 5% as mean and 100 as strength for illustration
+        strong_prior_mean = 0.05
+        strong_prior_strength = 100
+        strong_alpha_prior = strong_prior_mean * strong_prior_strength
+        strong_beta_prior = (1 - strong_prior_mean) * strong_prior_strength
+        
+        strong_alpha_post_a = strong_alpha_prior + conversions_a
+        strong_beta_post_a = strong_beta_prior + (visitors_a - conversions_a)
+        strong_alpha_post_b = strong_alpha_prior + conversions_b
+        strong_beta_post_b = strong_beta_prior + (visitors_b - conversions_b)
+        
+        strong_mean_a = strong_alpha_post_a / (strong_alpha_post_a + strong_beta_post_a)
+        strong_mean_b = strong_alpha_post_b / (strong_alpha_post_b + strong_beta_post_b)
+        
+        # Generate samples with strong informed prior
+        strong_samples_a = np.random.beta(strong_alpha_post_a, strong_beta_post_a, 100000)
+        strong_samples_b = np.random.beta(strong_alpha_post_b, strong_beta_post_b, 100000)
+        strong_prob_b_better = np.mean(strong_samples_b > strong_samples_a)
+        
+        # Calculate for current prior
+        current_alpha_post_a = alpha_prior_a + conversions_a
+        current_beta_post_a = beta_prior_a + (visitors_a - conversions_a)
+        current_alpha_post_b = alpha_prior_b + conversions_b
+        current_beta_post_b = beta_prior_b + (visitors_b - conversions_b)
+        
+        current_mean_a = current_alpha_post_a / (current_alpha_post_a + current_beta_post_a)
+        current_mean_b = current_alpha_post_b / (current_alpha_post_b + current_beta_post_b)
+        
+        # Create a comparison table
+        comparison_data = {
+            "Prior Type": ["Uninformative (Beta(1,1))", 
+                          f"Current ({prior_option})", 
+                          "Strong Informed (5% mean, strength=100)"],
+            "Posterior Mean A": [uninform_mean_a, current_mean_a, strong_mean_a],
+            "Posterior Mean B": [uninform_mean_b, current_mean_b, strong_mean_b],
+            "Probability B > A": [uninform_prob_b_better, prob_b_better, strong_prob_b_better]
+        }
+        
+        comparison_df = pd.DataFrame(comparison_data)
+        
+        # Display the table
+        st.dataframe(comparison_df.style.format({
+            "Posterior Mean A": "{:.2%}",
+            "Posterior Mean B": "{:.2%}",
+            "Probability B > A": "{:.2%}"
+        }))
+        
+        st.markdown("""
+        ### Key Takeaways
+        
+        1. **Uninformative Prior**: Relies almost entirely on the observed data. This can lead to higher confidence with small samples, as it doesn't incorporate any skepticism about extreme results.
+        
+        2. **Informed Prior**: Pulls posterior estimates toward the prior mean. The strength parameter determines how much influence the prior has relative to the observed data.
+        
+        3. **Mathematical Explanation**:
+           
+           With an uninformative prior Beta(1,1), the posterior calculation is:
+           ```
+           alpha_posterior_A = 1 + conversions_A
+           beta_posterior_A = 1 + (visitors_A - conversions_A)
+           ```
+           
+           With an informed prior with mean μ and strength s, the calculation is:
+           ```
+           alpha_prior = μ × s
+           beta_prior = (1-μ) × s
+           alpha_posterior_A = alpha_prior + conversions_A
+           beta_posterior_A = beta_prior + (visitors_A - conversions_A)
+           ```
+           
+           The posterior mean is then:
+           ```
+           posterior_mean = alpha_posterior / (alpha_posterior + beta_posterior)
+           ```
+           
+        4. **When Prior Choice Matters Most**:
+           - Small sample sizes
+           - Observed rates far from typical values
+           - High-stakes decisions
+        
+        5. **Recommendation**: If you have reliable historical data about typical conversion rates, using an informed prior can protect against overconfidence based on small samples. If you're exploring something new or want to be more data-driven, an uninformative prior might be appropriate.
+        """)
+        
+        # Add a visual to show the "pull" effect of priors
+        st.subheader("Visual Comparison of Prior Effects")
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # Observed data reference line
+        observed_rate_a = conversions_a / visitors_a
+        observed_rate_b = conversions_b / visitors_b
+        
+        x = ['Variant A', 'Variant B']
+        y_observed = [observed_rate_a, observed_rate_b]
+        y_uninform = [uninform_mean_a, uninform_mean_b]
+        y_current = [current_mean_a, current_mean_b]
+        y_strong = [strong_mean_a, strong_mean_b]
+        
+        ax.plot(x, y_observed, 'o-', label='Observed Rates', color='black', linewidth=2)
+        ax.plot(x, y_uninform, 's-', label='With Uninformative Prior', color='blue', linewidth=2)
+        ax.plot(x, y_current, 'd-', label=f'With Current Prior', color='green', linewidth=2)
+        ax.plot(x, y_strong, '^-', label='With Strong Prior (5%)', color='red', linewidth=2)
+        
+        # Add horizontal line for the strong prior mean
+        ax.axhline(y=0.05, color='red', linestyle='--', alpha=0.3, label='Strong Prior Mean (5%)')
+        
+        ax.set_ylabel('Conversion Rate')
+        ax.set_title('How Different Priors Pull the Posterior Means')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        # Add some explanatory text annotations
+        if abs(strong_mean_a - observed_rate_a) > 0.02:  # Only annotate if there's a visible difference
+            ax.annotate('Prior pulls\nposterior toward\nprior mean',
+                       xy=('Variant A', strong_mean_a),
+                       xytext=('Variant A', (observed_rate_a + strong_mean_a)/2 + 0.02),
+                       arrowprops=dict(arrowstyle='->'),
+                       ha='center')
+        
+        st.pyplot(fig)
+    
     # Calculate posterior parameters
     alpha_posterior_a = alpha_prior_a + conversions_a
     beta_posterior_a = beta_prior_a + (visitors_a - conversions_a)
