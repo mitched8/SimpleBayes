@@ -645,6 +645,11 @@ elif scenario == "A/B Testing Calculator":
         current_mean_a = current_alpha_post_a / (current_alpha_post_a + current_beta_post_a)
         current_mean_b = current_alpha_post_b / (current_alpha_post_b + current_beta_post_b)
         
+        # Generate samples for current prior
+        current_samples_a = np.random.beta(current_alpha_post_a, current_beta_post_a, 100000)
+        current_samples_b = np.random.beta(current_alpha_post_b, current_beta_post_b, 100000)
+        current_prob_b_better = np.mean(current_samples_b > current_samples_a)
+        
         # Create a comparison table
         comparison_data = {
             "Prior Type": ["Uninformative (Beta(1,1))", 
@@ -652,7 +657,7 @@ elif scenario == "A/B Testing Calculator":
                           "Strong Informed (5% mean, strength=100)"],
             "Posterior Mean A": [uninform_mean_a, current_mean_a, strong_mean_a],
             "Posterior Mean B": [uninform_mean_b, current_mean_b, strong_mean_b],
-            "Probability B > A": [uninform_prob_b_better, prob_b_better, strong_prob_b_better]
+            "Probability B > A": [uninform_prob_b_better, current_prob_b_better, strong_prob_b_better]
         }
         
         comparison_df = pd.DataFrame(comparison_data)
