@@ -45,7 +45,7 @@ st.sidebar.header("Bayesian Parameters")
 # Scenario selection
 scenario = st.sidebar.selectbox(
     "Select a scenario",
-    ["Medical Test", "Weather Prediction", "Custom Example", "Real World Data Analysis"]
+    ["Medical Test", "Weather Prediction", "Custom Example", "Real World Data Analysis", "A/B Testing Calculator"]
 )
 
 # Main content based on the selected scenario
@@ -511,6 +511,336 @@ elif scenario == "Real World Data Analysis":
     
     ax.set_title(f"Petal Length vs {feature_option}")
     st.pyplot(fig)
+
+elif scenario == "A/B Testing Calculator":
+    st.header("Bayesian A/B Testing Calculator")
+    st.markdown("""
+    This tool uses Bayesian statistics to analyze A/B test results. Unlike traditional (frequentist) methods, 
+    the Bayesian approach directly answers the question: "What is the probability that variant B is better than variant A?"
+    
+    The calculator uses the Beta-Binomial model, which is a conjugate prior for the binomial distribution:
+    - Prior distribution: Beta(α, β) represents our beliefs about conversion rates before seeing the data
+    - Likelihood: Binomial distribution for observed conversions
+    - Posterior distribution: Beta(α + conversions, β + non-conversions)
+    """)
+    
+    # Input section for test results
+    st.subheader("Test Results")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### Variant A (Control)")
+        visitors_a = st.number_input("Visitors A", min_value=1, value=1000, step=100)
+        conversions_a = st.number_input("Conversions A", min_value=0, max_value=visitors_a, value=100, step=10)
+        conversion_rate_a = conversions_a / visitors_a
+        st.markdown(f"Observed conversion rate: **{conversion_rate_a:.2%}**")
+    
+    with col2:
+        st.markdown("### Variant B (Treatment)")
+        visitors_b = st.number_input("Visitors B", min_value=1, value=1000, step=100)
+        conversions_b = st.number_input("Conversions B", min_value=0, max_value=visitors_b, value=120, step=10)
+        conversion_rate_b = conversions_b / visitors_b
+        st.markdown(f"Observed conversion rate: **{conversion_rate_b:.2%}**")
+    
+    # Prior settings
+    st.subheader("Prior Settings")
+    
+    prior_option = st.radio(
+        "Prior knowledge",
+        ["Uninformative prior (Beta(1,1))", "Informed prior", "Custom prior"]
+    )
+    
+    if prior_option == "Uninformative prior (Beta(1,1))":
+        alpha_prior_a = 1
+        beta_prior_a = 1
+        alpha_prior_b = 1
+        beta_prior_b = 1
+        st.markdown("""
+        Using an uninformative prior (Beta(1,1)) which is equivalent to a uniform distribution. 
+        This means we assume all conversion rates between 0% and 100% are equally likely before seeing the data.
+        """)
+    
+    elif prior_option == "Informed prior":
+        prior_mean = st.slider("Prior mean conversion rate (%)", 0.1, 50.0, 10.0, 0.1) / 100
+        prior_strength = st.slider("Prior strength (equivalent sample size)", 2, 100, 10, 2)
+        
+        # Calculate alpha and beta from mean and strength
+        alpha_prior_a = prior_mean * prior_strength
+        beta_prior_a = (1 - prior_mean) * prior_strength
+        alpha_prior_b = alpha_prior_a  # Same prior for both variants
+        beta_prior_b = beta_prior_a
+        
+        st.markdown(f"""
+        Using an informed prior with mean={prior_mean:.2%} and strength={prior_strength}.
+        This is equivalent to Beta({alpha_prior_a:.1f}, {beta_prior_a:.1f}), or having already observed 
+        {prior_strength} visitors with a {prior_mean:.2%} conversion rate.
+        """)
+    
+    elif prior_option == "Custom prior":
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("### Prior for Variant A")
+            alpha_prior_a = st.number_input("Alpha A", min_value=0.1, value=1.0, step=0.1)
+            beta_prior_a = st.number_input("Beta A", min_value=0.1, value=1.0, step=0.1)
+            prior_mean_a = alpha_prior_a / (alpha_prior_a + beta_prior_a)
+            st.markdown(f"Prior mean for A: **{prior_mean_a:.2%}**")
+        
+        with col2:
+            st.markdown("### Prior for Variant B")
+            alpha_prior_b = st.number_input("Alpha B", min_value=0.1, value=1.0, step=0.1)
+            beta_prior_b = st.number_input("Beta B", min_value=0.1, value=1.0, step=0.1)
+            prior_mean_b = alpha_prior_b / (alpha_prior_b + beta_prior_b)
+            st.markdown(f"Prior mean for B: **{prior_mean_b:.2%}**")
+    
+    # Calculate posterior parameters
+    alpha_posterior_a = alpha_prior_a + conversions_a
+    beta_posterior_a = beta_prior_a + (visitors_a - conversions_a)
+    
+    alpha_posterior_b = alpha_prior_b + conversions_b
+    beta_posterior_b = beta_prior_b + (visitors_b - conversions_b)
+    
+    # Calculate posterior means
+    posterior_mean_a = alpha_posterior_a / (alpha_posterior_a + beta_posterior_a)
+    posterior_mean_b = alpha_posterior_b / (alpha_posterior_b + beta_posterior_b)
+    
+    # Generate samples for Monte Carlo estimation
+    np.random.seed(42)  # For reproducibility
+    samples_a = np.random.beta(alpha_posterior_a, beta_posterior_a, 100000)
+    samples_b = np.random.beta(alpha_posterior_b, beta_posterior_b, 100000)
+    
+    # Calculate probability that B is better than A
+    prob_b_better = np.mean(samples_b > samples_a)
+    
+    # Calculate expected lift
+    expected_lift = (posterior_mean_b - posterior_mean_a) / posterior_mean_a
+    
+    # Calculate 95% credible intervals
+    ci_a = (np.percentile(samples_a, 2.5), np.percentile(samples_a, 97.5))
+    ci_b = (np.percentile(samples_b, 2.5), np.percentile(samples_b, 97.5))
+    
+    # Calculate probability of various lift thresholds
+    lift_thresholds = [0.01, 0.02, 0.05, 0.1]  # 1%, 2%, 5%, 10%
+    prob_b_better_than_a_by = {}
+    for threshold in lift_thresholds:
+        prob_b_better_than_a_by[threshold] = np.mean(samples_b > samples_a * (1 + threshold))
+    
+    # Results section
+    st.subheader("Bayesian Analysis Results")
+    
+    # Key metrics
+    metrics_col1, metrics_col2, metrics_col3 = st.columns(3)
+    
+    with metrics_col1:
+        st.metric(
+            label="Probability B > A",
+            value=f"{prob_b_better:.2%}",
+            delta=f"{prob_b_better - 0.5:.2%}" if prob_b_better != 0.5 else None,
+            delta_color="normal"
+        )
+    
+    with metrics_col2:
+        st.metric(
+            label="Expected Lift",
+            value=f"{expected_lift:.2%}",
+            delta=f"{posterior_mean_b - posterior_mean_a:.3%} absolute",
+            delta_color="normal"
+        )
+    
+    with metrics_col3:
+        risk_of_loss = 1 - prob_b_better
+        st.metric(
+            label="Risk of Loss",
+            value=f"{risk_of_loss:.2%}",
+            delta=f"{0.5 - risk_of_loss:.2%}" if risk_of_loss != 0.5 else None,
+            delta_color="inverse"
+        )
+    
+    # Probability of minimum lift
+    st.subheader("Probability of Achieving Minimum Lift")
+    lift_cols = st.columns(len(lift_thresholds))
+    
+    for i, threshold in enumerate(lift_thresholds):
+        with lift_cols[i]:
+            st.metric(
+                label=f"Prob. B > A by {threshold:.0%}",
+                value=f"{prob_b_better_than_a_by[threshold]:.2%}"
+            )
+    
+    # Visualizations
+    st.subheader("Visualizations")
+    
+    # Prior and posterior comparison
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    
+    # Plot prior distributions
+    x = np.linspace(0, 1, 1000)
+    
+    prior_a = stats.beta.pdf(x, alpha_prior_a, beta_prior_a)
+    prior_b = stats.beta.pdf(x, alpha_prior_b, beta_prior_b)
+    
+    axes[0].plot(x, prior_a, label=f"A: Beta({alpha_prior_a:.1f}, {beta_prior_a:.1f})", color='blue', linestyle='--')
+    axes[0].plot(x, prior_b, label=f"B: Beta({alpha_prior_b:.1f}, {beta_prior_b:.1f})", color='red', linestyle='--')
+    axes[0].set_title("Prior Distributions")
+    axes[0].set_xlabel("Conversion Rate")
+    axes[0].set_ylabel("Density")
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
+    
+    # Plot posterior distributions
+    posterior_a = stats.beta.pdf(x, alpha_posterior_a, beta_posterior_a)
+    posterior_b = stats.beta.pdf(x, alpha_posterior_b, beta_posterior_b)
+    
+    axes[1].plot(x, posterior_a, 
+                label=f"A: Beta({alpha_posterior_a:.1f}, {beta_posterior_a:.1f})", 
+                color='blue')
+    axes[1].plot(x, posterior_b, 
+                label=f"B: Beta({alpha_posterior_b:.1f}, {beta_posterior_b:.1f})", 
+                color='red')
+    axes[1].axvline(posterior_mean_a, color='blue', linestyle=':', alpha=0.7, 
+                    label=f"Mean A: {posterior_mean_a:.2%}")
+    axes[1].axvline(posterior_mean_b, color='red', linestyle=':', alpha=0.7, 
+                    label=f"Mean B: {posterior_mean_b:.2%}")
+    
+    # Shade 95% credible intervals
+    axes[1].fill_between(x, 0, posterior_a, where=(x >= ci_a[0]) & (x <= ci_a[1]), 
+                        color='blue', alpha=0.1, 
+                        label=f"95% CI A: [{ci_a[0]:.2%}, {ci_a[1]:.2%}]")
+    axes[1].fill_between(x, 0, posterior_b, where=(x >= ci_b[0]) & (x <= ci_b[1]), 
+                        color='red', alpha=0.1, 
+                        label=f"95% CI B: [{ci_b[0]:.2%}, {ci_b[1]:.2%}]")
+    
+    axes[1].set_title("Posterior Distributions")
+    axes[1].set_xlabel("Conversion Rate")
+    axes[1].set_ylabel("Density")
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    st.pyplot(fig)
+    
+    # Distribution of difference
+    st.subheader("Distribution of Difference (B - A)")
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Calculate differences
+    diff_samples = samples_b - samples_a
+    
+    # Plot histogram of differences
+    sns.histplot(diff_samples, kde=True, ax=ax)
+    
+    # Add mean and percentiles
+    mean_diff = np.mean(diff_samples)
+    percentile_2_5 = np.percentile(diff_samples, 2.5)
+    percentile_97_5 = np.percentile(diff_samples, 97.5)
+    
+    ax.axvline(mean_diff, color='red', linestyle='--', 
+                label=f"Mean: {mean_diff:.2%}")
+    ax.axvline(0, color='black', linestyle='-', alpha=0.7, 
+                label="No difference")
+    ax.axvline(percentile_2_5, color='green', linestyle=':', 
+                label=f"2.5%: {percentile_2_5:.2%}")
+    ax.axvline(percentile_97_5, color='green', linestyle=':', 
+                label=f"97.5%: {percentile_97_5:.2%}")
+    
+    # Shade area where B > A
+    positive_mask = diff_samples > 0
+    ax.fill_between(
+        x=np.linspace(0, max(diff_samples), 1000),
+        y1=0, 
+        y2=ax.get_ylim()[1],
+        color='green', 
+        alpha=0.1,
+        label=f"Prob(B > A): {prob_b_better:.2%}"
+    )
+    
+    ax.set_title("Distribution of Difference in Conversion Rates (B - A)")
+    ax.set_xlabel("Difference in Conversion Rate")
+    ax.set_ylabel("Density")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    st.pyplot(fig)
+    
+    # Interpretation and recommendations
+    st.subheader("Interpretation")
+    
+    if prob_b_better > 0.95:
+        st.success(f"""
+        **Strong evidence that B is better than A** (Probability: {prob_b_better:.2%})
+        
+        With {prob_b_better:.2%} probability, variant B has a higher conversion rate than variant A.
+        The expected lift is {expected_lift:.2%}.
+        
+        **Recommendation**: Implement variant B.
+        """)
+    elif prob_b_better > 0.9:
+        st.info(f"""
+        **Moderate evidence that B is better than A** (Probability: {prob_b_better:.2%})
+        
+        With {prob_b_better:.2%} probability, variant B has a higher conversion rate than variant A.
+        The expected lift is {expected_lift:.2%}.
+        
+        **Recommendation**: Consider implementing variant B, or collect more data if the decision has high stakes.
+        """)
+    elif prob_b_better > 0.8:
+        st.warning(f"""
+        **Weak evidence that B is better than A** (Probability: {prob_b_better:.2%})
+        
+        With {prob_b_better:.2%} probability, variant B has a higher conversion rate than variant A.
+        The expected lift is {expected_lift:.2%}.
+        
+        **Recommendation**: Consider collecting more data before making a decision.
+        """)
+    elif prob_b_better < 0.2:
+        st.error(f"""
+        **Evidence that A is better than B** (Probability B > A: {prob_b_better:.2%})
+        
+        With {1-prob_b_better:.2%} probability, variant A has a higher conversion rate than variant B.
+        
+        **Recommendation**: Stay with variant A.
+        """)
+    else:
+        st.warning(f"""
+        **Inconclusive results** (Probability B > A: {prob_b_better:.2%})
+        
+        The data doesn't provide strong evidence in either direction.
+        
+        **Recommendation**: Continue the test to collect more data, or consider other factors in making your decision.
+        """)
+    
+    # Sample size calculator
+    st.subheader("Sample Size Planning")
+    st.markdown("""
+    If your test is inconclusive, you may want to collect more data. This tool helps you estimate 
+    how many more samples you need to reach a desired level of confidence.
+    """)
+    
+    target_prob = st.slider("Target probability of detecting a true difference", 0.8, 0.99, 0.95, 0.01)
+    min_effect = st.slider("Minimum meaningful effect size (%)", 1.0, 20.0, 5.0, 0.5) / 100
+    
+    # Estimate required sample size (using simple approximation)
+    baseline_rate = posterior_mean_a
+    p = baseline_rate
+    required_n_per_variant = int(16 * p * (1-p) / (min_effect**2))
+    
+    st.markdown(f"""
+    To detect an absolute difference of at least {min_effect:.1%} with {target_prob:.0%} probability,
+    you need approximately **{required_n_per_variant} visitors per variant**.
+    
+    You currently have {visitors_a} visitors for variant A and {visitors_b} visitors for variant B.
+    """)
+    
+    if visitors_a < required_n_per_variant or visitors_b < required_n_per_variant:
+        additional_a = max(0, required_n_per_variant - visitors_a)
+        additional_b = max(0, required_n_per_variant - visitors_b)
+        
+        st.markdown(f"""
+        To reach the required sample size, you need approximately:
+        - {additional_a} more visitors for variant A
+        - {additional_b} more visitors for variant B
+        """)
 
 # Sidebar explanation
 st.sidebar.markdown("""

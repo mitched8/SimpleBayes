@@ -38,7 +38,7 @@ The app should open automatically in your default web browser. If it doesn't, yo
 
 ## Features
 
-The application provides four different Bayesian probability scenarios:
+The application provides five different Bayesian probability scenarios:
 
 1. **Medical Test Scenario**: Calculate the probability that a patient has a disease given a positive test result.
    - Set disease prevalence, test sensitivity, and test specificity
@@ -58,6 +58,14 @@ The application provides four different Bayesian probability scenarios:
    - See prior and posterior probabilities for each species
    - Explore feature distributions and their impact on classification
    - Understand how Bayesian methods work with real-world data
+
+5. **A/B Testing Calculator**: Analyze A/B test results using Bayesian statistics.
+   - Input visitors and conversion counts for control and treatment variants
+   - Set prior beliefs about conversion rates
+   - Calculate the probability that B is better than A
+   - Visualize prior and posterior distributions
+   - Get recommendations based on the results
+   - Estimate required sample size for conclusive tests
 
 Each scenario includes:
 - Interactive sliders to adjust parameters
