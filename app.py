@@ -697,12 +697,38 @@ elif scenario == "A/B Testing Calculator":
            posterior_mean = alpha_posterior / (alpha_posterior + beta_posterior)
            ```
            
+           This can also be written as a weighted average:
+           ```
+           posterior_mean = (prior_strength × prior_mean + visitors × observed_rate) / (prior_strength + visitors)
+           ```
+           
         4. **When Prior Choice Matters Most**:
            - Small sample sizes
            - Observed rates far from typical values
            - High-stakes decisions
         
         5. **Recommendation**: If you have reliable historical data about typical conversion rates, using an informed prior can protect against overconfidence based on small samples. If you're exploring something new or want to be more data-driven, an uninformative prior might be appropriate.
+        
+        ### Why Informed Priors Matter Even for "Independent" Tests
+        
+        A common question is: "Why should prior knowledge influence my analysis of completely new variants A and B?"
+        
+        The answer lies in understanding that while variants A and B are independent experiments, conversion rates across similar types of tests tend to follow patterns:
+        
+        1. **Domain Knowledge**: If you've run dozens of e-commerce tests and found that add-to-cart conversion rates typically range from 3-7%, seeing a 25% conversion rate in a small sample is more likely due to random chance than a true breakthrough.
+        
+        2. **Protection Against Small Sample Noise**: Small samples (less than a few hundred observations) can produce extreme results by random chance alone. Informed priors help guard against overinterpreting this noise.
+        
+        3. **Pragmatic Bayesian Approach**: We're not saying new variants are connected to previous tests; we're saying they belong to the same class of phenomena that tends to behave in certain ways.
+        
+        4. **Gradual Updating**: As sample size increases, the influence of the prior diminishes and the data dominates. With enough data, even a strong prior will be overcome by consistent evidence.
+        
+        Consider this concrete example: If you test a new button color and see 5/50 conversions (10%) for A and 10/50 conversions (20%) for B:
+        
+        - The **uninformed approach** would fully trust this 10% difference despite the small sample.
+        - The **informed approach** would say: "While the data suggests B is better, such large differences are rare in button tests based on our history. Let's collect more data before making a decision."
+        
+        This is the essence of Bayesian thinking: updating beliefs incrementally as evidence accumulates, rather than treating each experiment as if we have no prior knowledge about typical conversion rates in our domain.
         """)
         
         # Add a visual to show the "pull" effect of priors
