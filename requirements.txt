@@ -5,4 +5,8 @@ matplotlib
 seaborn
 scikit-learn
 scipy
-statsmodels 
+statsmodels
+yfinance==0.2.36
+pandas_ta==0.3.14b0
+mplfinance==0.12.10b0
+plotly==5.18.0 

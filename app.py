@@ -11,6 +11,7 @@ from scenarios.medical_test import render_medical_test
 from scenarios.weather_prediction import render_weather_prediction
 from scenarios.time_series import render_time_series_analysis
 from scenarios.sensitivity_analysis import render_sensitivity_analysis
+from scenarios.financial_markets import render_financial_markets
 
 # Set page configuration
 st.set_page_config(
@@ -50,8 +51,14 @@ st.sidebar.header("Bayesian Parameters")
 
 # Scenario selection
 scenario = st.sidebar.selectbox(
-    "Select a scenario",
-    ["Medical Test", "Weather Prediction", "Custom Example", "Real World Data Analysis", "A/B Testing Calculator", "Time Series Analysis", "Sensitivity Analysis"]
+    "Select Scenario",
+    [
+        "Medical Test",
+        "Weather Prediction",
+        "Time Series Analysis",
+        "Sensitivity Analysis",
+        "Financial Markets"
+    ]
 )
 
 # Main content based on the selected scenario
@@ -63,6 +70,8 @@ elif scenario == "Time Series Analysis":
     render_time_series_analysis()
 elif scenario == "Sensitivity Analysis":
     render_sensitivity_analysis()
+elif scenario == "Financial Markets":
+    render_financial_markets()
 elif scenario == "Custom Example":
     # TODO: Move this to a separate module
     st.header("Custom Bayesian Example")

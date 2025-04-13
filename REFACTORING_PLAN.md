@@ -10,6 +10,7 @@
 6. ✅ Updated app.py to use the modular structure
 7. ✅ Updated README.md and requirements.txt
 8. ✅ Fixed Streamlit pages issue by renaming 'pages' directory to 'scenarios'
+9. ✅ Added Bayesian Sensitivity Analysis feature with parameter, prior, and model comparison capabilities
 
 ## Pending Tasks
 
@@ -60,4 +61,9 @@ For each scenario, follow these steps:
 
 4. Bayesian Reinforcement Learning
    - Interactive demo of Thompson sampling
-   - Multi-armed bandit problem with Bayesian updates 
+   - Multi-armed bandit problem with Bayesian updates
+
+5. Advanced Sensitivity Analysis
+   - Global sensitivity analysis with Sobol indices
+   - Interactive tornado plots for parameter importance
+   - Robustness metrics for decision boundaries 

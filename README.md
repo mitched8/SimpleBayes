@@ -38,7 +38,7 @@ The app should open automatically in your default web browser. If it doesn't, yo
 
 ## Features
 
-The application provides six different Bayesian probability scenarios:
+The application provides seven different Bayesian probability scenarios:
 
 1. **Medical Test Scenario**: Calculate the probability that a patient has a disease given a positive test result.
    - Set disease prevalence, test sensitivity, and test specificity
@@ -73,6 +73,13 @@ The application provides six different Bayesian probability scenarios:
    - Decompose time series into trend, seasonal, and remainder components
    - Upload custom data or use synthetic examples
    - Analyze with various Bayesian time series models
+
+7. **Sensitivity Analysis**: Explore how changes in parameters, priors, and models affect Bayesian results.
+   - Parameter sensitivity: See how outcomes change when varying input parameters
+   - Prior sensitivity: Examine how different prior distributions affect posterior results
+   - Model comparison: Compare competing models and understand sensitivity to model structure
+   - Calculate elasticity and identify decision thresholds
+   - Determine robustness of conclusions to different assumptions
 
 Each scenario includes:
 - Interactive sliders to adjust parameters
