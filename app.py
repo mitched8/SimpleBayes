@@ -10,6 +10,7 @@ from scipy import stats
 from scenarios.medical_test import render_medical_test
 from scenarios.weather_prediction import render_weather_prediction
 from scenarios.time_series import render_time_series_analysis
+from scenarios.sensitivity_analysis import render_sensitivity_analysis
 
 # Set page configuration
 st.set_page_config(
@@ -50,7 +51,7 @@ st.sidebar.header("Bayesian Parameters")
 # Scenario selection
 scenario = st.sidebar.selectbox(
     "Select a scenario",
-    ["Medical Test", "Weather Prediction", "Custom Example", "Real World Data Analysis", "A/B Testing Calculator", "Time Series Analysis"]
+    ["Medical Test", "Weather Prediction", "Custom Example", "Real World Data Analysis", "A/B Testing Calculator", "Time Series Analysis", "Sensitivity Analysis"]
 )
 
 # Main content based on the selected scenario
@@ -60,6 +61,8 @@ elif scenario == "Weather Prediction":
     render_weather_prediction()
 elif scenario == "Time Series Analysis":
     render_time_series_analysis()
+elif scenario == "Sensitivity Analysis":
+    render_sensitivity_analysis()
 elif scenario == "Custom Example":
     # TODO: Move this to a separate module
     st.header("Custom Bayesian Example")
@@ -169,11 +172,11 @@ elif scenario == "Real World Data Analysis":
     st.markdown("""
     This scenario applies Bayesian inference to the well-known Iris flower dataset.
     
-    We'll calculate the probability of a flower belonging to a specific species given its petal length.
+    We'll calculate the probability of a flower belonging to a specific species given one or more flower features.
     
     - **Prior**: The proportion of each species in the dataset
-    - **Likelihood**: The probability of observing a certain petal length given the species
-    - **Posterior**: The updated probability of the species given the observed petal length
+    - **Likelihood**: The probability of observing certain feature values given the species
+    - **Posterior**: The updated probability of the species given the observed features
     """)
     
     # Load the Iris dataset
@@ -189,148 +192,690 @@ elif scenario == "Real World Data Analysis":
         st.write("Summary statistics:")
         st.dataframe(iris_df.describe())
     
-    # User input for petal length
-    col1, col2 = st.columns(2)
+    # User input for feature selection
+    st.subheader("Feature Selection")
     
-    with col1:
-        # Let user select a petal length to analyze
-        petal_length = st.slider("Select a petal length (cm)", 
-                                 float(iris_df["petal length (cm)"].min()),
-                                 float(iris_df["petal length (cm)"].max()),
-                                 float(iris_df["petal length (cm)"].median()),
-                                 0.1)
-    
-    with col2:
-        # Display distribution of petal lengths
-        fig, ax = plt.subplots(figsize=(8, 4))
-        sns.histplot(data=iris_df, x="petal length (cm)", hue="species", bins=20, kde=True, ax=ax)
-        ax.axvline(petal_length, color='red', linestyle='--', linewidth=2)
-        ax.set_title("Distribution of Petal Lengths by Species")
-        ax.text(petal_length + 0.1, ax.get_ylim()[1] * 0.9, f"Selected: {petal_length:.1f} cm", 
-                verticalalignment='top', horizontalalignment='left', color='red')
-        st.pyplot(fig)
-    
-    # Calculate priors (proportion of each species in dataset)
-    species_counts = iris_df['species'].value_counts()
-    prior_probs = {species: count/len(iris_df) for species, count in species_counts.items()}
-    
-    # Calculate likelihoods using a normal distribution approximation for each species
-    likelihoods = {}
-    
-    for species in iris.target_names:
-        # Get petal lengths for this species
-        species_petal_lengths = iris_df[iris_df["species"] == species]["petal length (cm)"]
-        
-        # Fit a normal distribution to the data
-        mean = species_petal_lengths.mean()
-        std = species_petal_lengths.std()
-        
-        # Calculate likelihood using normal PDF
-        likelihood = stats.norm.pdf(petal_length, mean, std)
-        likelihoods[species] = likelihood
-    
-    # Calculate posteriors
-    posteriors = calculate_posterior(prior_probs, likelihoods)
-    
-    # Create a DataFrame for display
-    data = {
-        "Species": list(prior_probs.keys()),
-        "Prior Probability": list(prior_probs.values()),
-        "Likelihood of Petal Length": list(likelihoods.values()),
-        "Posterior Probability": list(posteriors.values())
-    }
-    
-    df = pd.DataFrame(data)
-    
-    # Display the table
-    st.subheader("Bayesian Analysis Results")
-    st.dataframe(df.style.format({
-        "Prior Probability": "{:.4f}",
-        "Likelihood of Petal Length": "{:.6f}",
-        "Posterior Probability": "{:.4f}"
-    }))
-    
-    # Find the most likely species
-    most_likely_species = max(posteriors, key=posteriors.get)
-    
-    # Display the conclusion
-    st.markdown(f"""
-    ### Interpretation
-    
-    Given a petal length of **{petal_length:.1f} cm**, the flower is most likely a **{most_likely_species}** 
-    with a probability of **{posteriors[most_likely_species]:.2%}**.
-    
-    This demonstrates how we can use observed characteristics (petal length) to update our beliefs about 
-    the species classification.
-    """)
-    
-    # Visualization of prior vs posterior
-    st.subheader("Prior vs Posterior Probabilities")
-    
-    # Create a DataFrame for easier plotting
-    comparison_data = []
-    for species in prior_probs:
-        comparison_data.append({"Probability Type": "Prior", "Species": species, "Probability": prior_probs[species]})
-        comparison_data.append({"Probability Type": "Posterior", "Species": species, "Probability": posteriors[species]})
-    
-    comparison_df = pd.DataFrame(comparison_data)
-    
-    # Create grouped bar chart
-    fig, ax = plt.subplots(figsize=(10, 6))
-    colors = {"setosa": "#ff9999", "versicolor": "#66b3ff", "virginica": "#99ff99"}
-    
-    # Get x positions for bars
-    species_list = list(prior_probs.keys())
-    x = np.arange(len(species_list))
-    width = 0.35
-    
-    # Plot prior and posterior bars
-    prior_bars = ax.bar(x - width/2, [prior_probs[s] for s in species_list], width, label='Prior', alpha=0.7)
-    posterior_bars = ax.bar(x + width/2, [posteriors[s] for s in species_list], width, label='Posterior', alpha=0.7)
-    
-    # Add labels and legend
-    ax.set_xlabel('Species')
-    ax.set_ylabel('Probability')
-    ax.set_title('Prior vs Posterior Probabilities by Species')
-    ax.set_xticks(x)
-    ax.set_xticklabels(species_list)
-    ax.legend()
-    
-    # Add values on bars
-    for bars in [prior_bars, posterior_bars]:
-        for bar in bars:
-            height = bar.get_height()
-            ax.annotate(f'{height:.3f}',
-                        xy=(bar.get_x() + bar.get_width() / 2, height),
-                        xytext=(0, 3),
-                        textcoords="offset points",
-                        ha='center', va='bottom')
-    
-    st.pyplot(fig)
-    
-    # Additional visualization: feature distributions by species
-    st.subheader("Exploring Feature Distributions by Species")
-    
-    feature_option = st.selectbox(
-        "Select another feature to compare with petal length:",
-        ["sepal length (cm)", "sepal width (cm)", "petal width (cm)"]
+    # Allow users to choose single feature or multi-feature analysis
+    analysis_mode = st.radio(
+        "Analysis Mode", 
+        ["Single Feature Analysis", "Multi-Feature Analysis"],
+        help="Choose whether to analyze one feature or multiple features together"
     )
     
-    fig, ax = plt.subplots(figsize=(10, 6))
+    if analysis_mode == "Single Feature Analysis":
+        # Original single feature analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Let user select a feature to analyze
+            feature_option = st.selectbox(
+                "Select a feature to analyze", 
+                iris.feature_names,
+                index=2  # Default to petal length
+            )
+            
+            # Let user select a value for the feature
+            feature_min = float(iris_df[feature_option].min())
+            feature_max = float(iris_df[feature_option].max())
+            feature_median = float(iris_df[feature_option].median())
+            
+            feature_value = st.slider(
+                f"Select a {feature_option}", 
+                feature_min,
+                feature_max,
+                feature_median,
+                0.1
+            )
+        
+        with col2:
+            # Display distribution of the selected feature
+            fig, ax = plt.subplots(figsize=(8, 4))
+            sns.histplot(data=iris_df, x=feature_option, hue="species", bins=20, kde=True, ax=ax)
+            ax.axvline(feature_value, color='red', linestyle='--', linewidth=2)
+            ax.set_title(f"Distribution of {feature_option} by Species")
+            ax.text(feature_value + (feature_max - feature_min) * 0.02, 
+                    ax.get_ylim()[1] * 0.9, 
+                    f"Selected: {feature_value:.1f}", 
+                    verticalalignment='top', horizontalalignment='left', color='red')
+            st.pyplot(fig)
+        
+        # Calculate priors (proportion of each species in dataset)
+        species_counts = iris_df['species'].value_counts()
+        prior_probs = {species: count/len(iris_df) for species, count in species_counts.items()}
+        
+        # Calculate likelihoods using a normal distribution approximation for each species
+        likelihoods = {}
+        
+        for species in iris.target_names:
+            # Get feature values for this species
+            species_feature_values = iris_df[iris_df["species"] == species][feature_option]
+            
+            # Fit a normal distribution to the data
+            mean = species_feature_values.mean()
+            std = species_feature_values.std()
+            
+            # Calculate likelihood using normal PDF
+            likelihood = stats.norm.pdf(feature_value, mean, std)
+            likelihoods[species] = likelihood
+        
+        # Calculate posteriors
+        posteriors = calculate_posterior(prior_probs, likelihoods)
+        
+        # Create a DataFrame for display
+        data = {
+            "Species": list(prior_probs.keys()),
+            "Prior Probability": list(prior_probs.values()),
+            f"Likelihood of {feature_option}": list(likelihoods.values()),
+            "Posterior Probability": list(posteriors.values())
+        }
+        
+        df = pd.DataFrame(data)
+        
+        # Display the table
+        st.subheader("Bayesian Analysis Results")
+        st.dataframe(df.style.format({
+            "Prior Probability": "{:.4f}",
+            f"Likelihood of {feature_option}": "{:.6f}",
+            "Posterior Probability": "{:.4f}"
+        }))
+        
+        # Find the most likely species
+        most_likely_species = max(posteriors, key=posteriors.get)
+        
+        # Display the conclusion
+        st.markdown(f"""
+        ### Interpretation
+        
+        Given a {feature_option} of **{feature_value:.1f}**, the flower is most likely a **{most_likely_species}** 
+        with a probability of **{posteriors[most_likely_species]:.2%}**.
+        
+        This demonstrates how we can use observed characteristics to update our beliefs about 
+        the species classification.
+        """)
+        
+        # Visualization of prior vs posterior
+        st.subheader("Prior vs Posterior Probabilities")
+        
+        # Create a DataFrame for easier plotting
+        comparison_data = []
+        for species in prior_probs:
+            comparison_data.append({"Probability Type": "Prior", "Species": species, "Probability": prior_probs[species]})
+            comparison_data.append({"Probability Type": "Posterior", "Species": species, "Probability": posteriors[species]})
+        
+        comparison_df = pd.DataFrame(comparison_data)
+        
+        # Create grouped bar chart
+        fig, ax = plt.subplots(figsize=(10, 6))
+        colors = {"setosa": "#ff9999", "versicolor": "#66b3ff", "virginica": "#99ff99"}
+        
+        # Get x positions for bars
+        species_list = list(prior_probs.keys())
+        x = np.arange(len(species_list))
+        width = 0.35
+        
+        # Plot prior and posterior bars
+        prior_bars = ax.bar(x - width/2, [prior_probs[s] for s in species_list], width, label='Prior', alpha=0.7)
+        posterior_bars = ax.bar(x + width/2, [posteriors[s] for s in species_list], width, label='Posterior', alpha=0.7)
+        
+        # Add labels and legend
+        ax.set_xlabel('Species')
+        ax.set_ylabel('Probability')
+        ax.set_title('Prior vs Posterior Probabilities by Species')
+        ax.set_xticks(x)
+        ax.set_xticklabels(species_list)
+        ax.legend()
+        
+        # Add values on bars
+        for bars in [prior_bars, posterior_bars]:
+            for bar in bars:
+                height = bar.get_height()
+                ax.annotate(f'{height:.3f}',
+                            xy=(bar.get_x() + bar.get_width() / 2, height),
+                            xytext=(0, 3),
+                            textcoords="offset points",
+                            ha='center', va='bottom')
+        
+        st.pyplot(fig)
+        
+        # Additional visualization: feature distributions by species
+        st.subheader("Exploring Feature Distributions by Species")
+        
+        other_feature = st.selectbox(
+            "Select another feature to compare with the current feature:",
+            [f for f in iris.feature_names if f != feature_option]
+        )
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # Create scatter plot
+        sns.scatterplot(data=iris_df, x=feature_option, y=other_feature, hue="species", ax=ax)
+        
+        # Add vertical line for selected feature value
+        ax.axvline(x=feature_value, color='red', linestyle='--')
+        
+        # Highlight the region around the selected value
+        span = (feature_max - feature_min) * 0.02
+        rect = plt.Rectangle((feature_value-span, ax.get_ylim()[0]), 
+                              span*2, ax.get_ylim()[1]-ax.get_ylim()[0], 
+                              color='red', alpha=0.1)
+        ax.add_patch(rect)
+        
+        ax.set_title(f"{feature_option} vs {other_feature}")
+        st.pyplot(fig)
     
-    # Create scatter plot
-    sns.scatterplot(data=iris_df, x="petal length (cm)", y=feature_option, hue="species", ax=ax)
-    
-    # Add vertical line for selected petal length
-    ax.axvline(x=petal_length, color='red', linestyle='--')
-    
-    # Highlight the region around the selected petal length
-    rect = plt.Rectangle((petal_length-0.2, ax.get_ylim()[0]), 0.4, ax.get_ylim()[1]-ax.get_ylim()[0], 
-                        color='red', alpha=0.1)
-    ax.add_patch(rect)
-    
-    ax.set_title(f"Petal Length vs {feature_option}")
-    st.pyplot(fig)
+    else:  # Multi-Feature Analysis
+        st.markdown("""
+        ### Multi-Feature Bayesian Classification
+        
+        In this mode, you can select multiple features and see how they jointly affect 
+        the posterior probabilities when used together.
+        """)
+        
+        # Let user select features to include in the analysis
+        selected_features = st.multiselect(
+            "Select features to include in the analysis",
+            iris.feature_names,
+            default=["petal length (cm)", "petal width (cm)"]
+        )
+        
+        if not selected_features:
+            st.warning("Please select at least one feature to proceed with the analysis.")
+        else:
+            # Set up inputs for selected features
+            st.subheader("Set Feature Values")
+            
+            feature_values = {}
+            col_width = max(1, min(4, len(selected_features)))
+            cols = st.columns(col_width)
+            
+            for idx, feature in enumerate(selected_features):
+                col_idx = idx % col_width
+                with cols[col_idx]:
+                    feature_min = float(iris_df[feature].min())
+                    feature_max = float(iris_df[feature].max())
+                    feature_median = float(iris_df[feature].median())
+                    
+                    feature_values[feature] = st.slider(
+                        f"{feature}", 
+                        feature_min,
+                        feature_max,
+                        feature_median,
+                        (feature_max - feature_min) / 50
+                    )
+            
+            # Calculate priors
+            species_counts = iris_df['species'].value_counts()
+            prior_probs = {species: count/len(iris_df) for species, count in species_counts.items()}
+            
+            # Calculate likelihoods for each feature and species
+            # Assume features are independent given the species (Naive Bayes assumption)
+            likelihoods = {species: 1.0 for species in iris.target_names}
+            feature_likelihoods = {}
+            
+            for species in iris.target_names:
+                feature_likelihoods[species] = {}
+                for feature in selected_features:
+                    # Get feature values for this species
+                    species_feature_values = iris_df[iris_df["species"] == species][feature]
+                    
+                    # Fit a normal distribution
+                    mean = species_feature_values.mean()
+                    std = species_feature_values.std()
+                    
+                    # Calculate likelihood and multiply to get joint likelihood (Naive Bayes)
+                    feature_likelihood = stats.norm.pdf(feature_values[feature], mean, std)
+                    likelihoods[species] *= feature_likelihood
+                    feature_likelihoods[species][feature] = feature_likelihood
+            
+            # Calculate posteriors
+            posteriors = calculate_posterior(prior_probs, likelihoods)
+            
+            # Create a results DataFrame
+            results = []
+            for species in iris.target_names:
+                row = {
+                    "Species": species,
+                    "Prior": prior_probs[species],
+                    "Joint Likelihood": likelihoods[species],
+                    "Posterior": posteriors[species]
+                }
+                # Add individual feature likelihoods
+                for feature in selected_features:
+                    row[f"Likelihood ({feature})"] = feature_likelihoods[species][feature]
+                
+                results.append(row)
+            
+            results_df = pd.DataFrame(results)
+            
+            # Display results
+            st.subheader("Bayesian Analysis Results")
+            
+            # Format columns for display
+            format_dict = {
+                "Prior": "{:.4f}",
+                "Joint Likelihood": "{:.6e}",
+                "Posterior": "{:.4f}"
+            }
+            for feature in selected_features:
+                format_dict[f"Likelihood ({feature})"] = "{:.6f}"
+            
+            st.dataframe(results_df.style.format(format_dict))
+            
+            # Find the most likely species
+            most_likely_species = max(posteriors, key=posteriors.get)
+            
+            # Create a feature value string
+            feature_values_str = ", ".join([f"{f}={v:.2f}" for f, v in feature_values.items()])
+            
+            # Display the conclusion
+            st.markdown(f"""
+            ### Interpretation
+            
+            Given the selected feature values ({feature_values_str}), the flower is most likely a **{most_likely_species}** 
+            with a probability of **{posteriors[most_likely_species]:.2%}**.
+            
+            Using multiple features in a Bayesian framework provides a more comprehensive classification
+            than using a single feature alone.
+            """)
+            
+            # Data Visualizations
+            st.subheader("Visualizations")
+            
+            # Bar chart comparing Prior and Posterior probabilities
+            fig, ax = plt.subplots(figsize=(10, 6))
+            
+            species_list = list(prior_probs.keys())
+            x = np.arange(len(species_list))
+            width = 0.35
+            
+            prior_bars = ax.bar(x - width/2, [prior_probs[s] for s in species_list], width, label='Prior', alpha=0.7)
+            posterior_bars = ax.bar(x + width/2, [posteriors[s] for s in species_list], width, label='Posterior', alpha=0.7)
+            
+            ax.set_xlabel('Species')
+            ax.set_ylabel('Probability')
+            ax.set_title('Prior vs Posterior Probabilities by Species')
+            ax.set_xticks(x)
+            ax.set_xticklabels(species_list)
+            ax.legend()
+            
+            for bars in [prior_bars, posterior_bars]:
+                for bar in bars:
+                    height = bar.get_height()
+                    ax.annotate(f'{height:.3f}',
+                                xy=(bar.get_x() + bar.get_width() / 2, height),
+                                xytext=(0, 3),
+                                textcoords="offset points",
+                                ha='center', va='bottom')
+            
+            st.pyplot(fig)
+            
+            # Feature Pair Visualization - if we have 2+ features
+            if len(selected_features) >= 2:
+                st.subheader("Feature Space Visualization")
+                
+                # Allow user to select which features to plot
+                if len(selected_features) > 2:
+                    plot_features = st.multiselect(
+                        "Select two features to visualize:",
+                        selected_features,
+                        default=selected_features[:2],
+                        max_selections=2
+                    )
+                    if len(plot_features) != 2:
+                        st.warning("Please select exactly two features for visualization.")
+                        plot_features = selected_features[:2]
+                else:
+                    plot_features = selected_features
+                
+                if len(plot_features) == 2:
+                    x_feature, y_feature = plot_features
+                    
+                    fig, ax = plt.subplots(figsize=(10, 8))
+                    
+                    # Create scatter plot
+                    scatter = sns.scatterplot(
+                        data=iris_df, 
+                        x=x_feature, 
+                        y=y_feature, 
+                        hue="species",
+                        style="species",
+                        s=100,
+                        alpha=0.7,
+                        ax=ax
+                    )
+                    
+                    # Mark selected point
+                    ax.scatter(
+                        x=feature_values[x_feature],
+                        y=feature_values[y_feature],
+                        color='black',
+                        s=200,
+                        marker='X',
+                        edgecolor='white',
+                        linewidth=2,
+                        label='Selected Point'
+                    )
+                    
+                    # Add decision boundaries visualization if using 2 features
+                    if len(selected_features) == 2:
+                        st.markdown("""
+                        ### Decision Boundaries
+                        
+                        The contour lines show approximate decision boundaries between species 
+                        based on Bayesian posterior probabilities. Each region represents where a particular
+                        species has the highest posterior probability.
+                        """)
+                        
+                        # Create a grid for decision boundary visualization
+                        x_min, x_max = iris_df[x_feature].min() - 0.5, iris_df[x_feature].max() + 0.5
+                        y_min, y_max = iris_df[y_feature].min() - 0.5, iris_df[y_feature].max() + 0.5
+                        xx, yy = np.meshgrid(np.arange(x_min, x_max, 0.1), np.arange(y_min, y_max, 0.1))
+                        
+                        # Calculate posteriors for each grid point
+                        grid_posteriors = []
+                        for i in range(len(xx.flat)):
+                            grid_values = {
+                                x_feature: xx.flat[i],
+                                y_feature: yy.flat[i]
+                            }
+                            
+                            grid_likelihoods = {species: 1.0 for species in iris.target_names}
+                            for species in iris.target_names:
+                                for feature, value in grid_values.items():
+                                    species_feature_values = iris_df[iris_df["species"] == species][feature]
+                                    mean = species_feature_values.mean()
+                                    std = species_feature_values.std()
+                                    grid_likelihoods[species] *= stats.norm.pdf(value, mean, std)
+                            
+                            grid_post = calculate_posterior(prior_probs, grid_likelihoods)
+                            # Get most likely species (0=setosa, 1=versicolor, 2=virginica)
+                            most_likely = iris.target_names.index(max(grid_post, key=grid_post.get))
+                            grid_posteriors.append(most_likely)
+                        
+                        # Reshape results
+                        Z = np.array(grid_posteriors).reshape(xx.shape)
+                        
+                        # Plot decision boundaries
+                        ax.contourf(xx, yy, Z, alpha=0.2, cmap='coolwarm')
+                        
+                        # Add legend
+                        plt.legend(title="Species")
+                        
+                    # Add axis labels and title
+                    ax.set_xlabel(x_feature)
+                    ax.set_ylabel(y_feature)
+                    ax.set_title(f"Feature Space: {x_feature} vs {y_feature}")
+                    
+                    st.pyplot(fig)
+                
+                # Feature Importance Analysis
+                st.subheader("Feature Importance Analysis")
+                
+                st.markdown("""
+                This section shows how each feature individually contributes to the classification.
+                Higher values indicate that the feature provides stronger evidence for that species.
+                """)
+                
+                # Create a heatmap of feature likelihoods
+                feature_importance_data = {}
+                for species in iris.target_names:
+                    feature_importance_data[species] = {}
+                    for feature in selected_features:
+                        feature_importance_data[species][feature] = feature_likelihoods[species][feature]
+                
+                feature_importance_df = pd.DataFrame(feature_importance_data)
+                
+                fig, ax = plt.subplots(figsize=(10, len(selected_features) * 0.8))
+                sns.heatmap(
+                    feature_importance_df, 
+                    annot=True, 
+                    fmt=".2f", 
+                    cmap="YlGnBu",
+                    cbar_kws={'label': 'Likelihood'},
+                    ax=ax
+                )
+                ax.set_title("Feature Likelihood by Species")
+                
+                st.pyplot(fig)
+                
+            # Impact of individual features on classification
+            st.subheader("Impact of Each Feature on Classification")
+            
+            st.markdown("""
+            This analysis shows how the posterior probabilities would change if we used each feature individually,
+            compared to using all selected features together.
+            """)
+            
+            # Calculate posteriors for each individual feature
+            individual_posteriors = {}
+            for feature in selected_features:
+                feature_only_likelihoods = {}
+                for species in iris.target_names:
+                    # Get feature values for this species
+                    species_feature_values = iris_df[iris_df["species"] == species][feature]
+                    
+                    # Fit a normal distribution
+                    mean = species_feature_values.mean()
+                    std = species_feature_values.std()
+                    
+                    # Calculate likelihood 
+                    feature_only_likelihoods[species] = stats.norm.pdf(feature_values[feature], mean, std)
+                
+                # Calculate posteriors with this feature only
+                individual_posteriors[feature] = calculate_posterior(prior_probs, feature_only_likelihoods)
+            
+            # Compare results
+            comparison_data = []
+            
+            # Add prior row
+            prior_row = {"Analysis Type": "Prior"}
+            for species in iris.target_names:
+                prior_row[species] = prior_probs[species]
+            comparison_data.append(prior_row)
+            
+            # Add row for each individual feature
+            for feature in selected_features:
+                feature_row = {"Analysis Type": f"Using only {feature}"}
+                for species in iris.target_names:
+                    feature_row[species] = individual_posteriors[feature][species]
+                comparison_data.append(feature_row)
+            
+            # Add row for all features combined
+            all_features_row = {"Analysis Type": "Using all selected features"}
+            for species in iris.target_names:
+                all_features_row[species] = posteriors[species]
+            comparison_data.append(all_features_row)
+            
+            # Create DataFrame
+            comparison_df = pd.DataFrame(comparison_data)
+            
+            # Display as table
+            st.dataframe(comparison_df.style.format({species: "{:.4f}" for species in iris.target_names}))
+            
+            # Visualize the comparison
+            fig, ax = plt.subplots(figsize=(12, len(comparison_data) * 0.8))
+            
+            # Create a heatmap
+            heatmap_data = comparison_df.set_index("Analysis Type")
+            sns.heatmap(
+                heatmap_data, 
+                annot=True, 
+                fmt=".2f", 
+                cmap="YlGnBu",
+                cbar_kws={'label': 'Probability'},
+                ax=ax
+            )
+            ax.set_title("Posterior Probabilities by Feature Combination")
+            
+            st.pyplot(fig)
+            
+            # Feature sensitivity analysis
+            st.subheader("Feature Sensitivity Analysis")
+            
+            # Let user select a feature to analyze sensitivity
+            sensitivity_feature = st.selectbox(
+                "Select a feature for sensitivity analysis:",
+                selected_features
+            )
+            
+            # Create a range of values for the selected feature
+            feature_min = float(iris_df[sensitivity_feature].min())
+            feature_max = float(iris_df[sensitivity_feature].max())
+            step = (feature_max - feature_min) / 50
+            feature_range = np.arange(feature_min, feature_max, step)
+            
+            # Calculate posteriors for each value in the range
+            sensitivity_results = []
+            for value in feature_range:
+                # Create a copy of current feature values
+                temp_values = feature_values.copy()
+                # Update with the current value from our range
+                temp_values[sensitivity_feature] = value
+                
+                # Calculate likelihoods
+                temp_likelihoods = {species: 1.0 for species in iris.target_names}
+                for species in iris.target_names:
+                    for feature, feat_value in temp_values.items():
+                        species_feature_values = iris_df[iris_df["species"] == species][feature]
+                        mean = species_feature_values.mean()
+                        std = species_feature_values.std()
+                        temp_likelihoods[species] *= stats.norm.pdf(feat_value, mean, std)
+                
+                # Calculate posteriors
+                temp_posteriors = calculate_posterior(prior_probs, temp_likelihoods)
+                
+                # Record results
+                result = {
+                    sensitivity_feature: value
+                }
+                for species in iris.target_names:
+                    result[species] = temp_posteriors[species]
+                
+                sensitivity_results.append(result)
+            
+            # Create DataFrame for sensitivity results
+            sensitivity_df = pd.DataFrame(sensitivity_results)
+            
+            # Plot sensitivity analysis
+            fig, ax = plt.subplots(figsize=(10, 6))
+            
+            for species in iris.target_names:
+                ax.plot(
+                    sensitivity_df[sensitivity_feature], 
+                    sensitivity_df[species],
+                    label=species,
+                    linewidth=2
+                )
+            
+            # Mark the currently selected value
+            current_value = feature_values[sensitivity_feature]
+            ax.axvline(x=current_value, color='black', linestyle='--', label=f'Selected Value: {current_value:.2f}')
+            
+            ax.set_xlabel(sensitivity_feature)
+            ax.set_ylabel('Posterior Probability')
+            ax.set_title(f'Sensitivity Analysis: Effect of {sensitivity_feature} on Posterior Probabilities')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            
+            st.pyplot(fig)
+            
+            # Find critical values where classification changes
+            prev_max_species = None
+            change_points = []
+            
+            for i, row in enumerate(sensitivity_results):
+                value = row[sensitivity_feature]
+                posteriors = {species: row[species] for species in iris.target_names}
+                max_species = max(posteriors, key=posteriors.get)
+                
+                if prev_max_species is not None and max_species != prev_max_species:
+                    # Classification changed, interpolate to find approximate change point
+                    if i > 0:
+                        prev_value = sensitivity_results[i-1][sensitivity_feature]
+                        change_point = (prev_value + value) / 2
+                        change_points.append({
+                            "Value": change_point,
+                            "From": prev_max_species,
+                            "To": max_species
+                        })
+                
+                prev_max_species = max_species
+            
+            if change_points:
+                st.markdown("### Decision Boundaries")
+                st.markdown(f"""
+                The classification changes at these values of {sensitivity_feature}:
+                """)
+                
+                for point in change_points:
+                    st.markdown(f"- At value **{point['Value']:.2f}**, classification changes from **{point['From']}** to **{point['To']}**")
+            else:
+                st.markdown(f"""
+                The classification remains stable as **{prev_max_species}** across all values of {sensitivity_feature} 
+                when other features are held constant at their current values.
+                """)
+            
+            # Explanation of multi-feature Bayesian analysis
+            with st.expander("Understanding Multi-Feature Bayesian Analysis"):
+                st.markdown("""
+                ### How Multi-Feature Bayesian Analysis Works
+                
+                This analysis uses the Naive Bayes approach, which makes an independence assumption to simplify calculations:
+                
+                1. **Prior Probabilities**: We start with the base rates of each species in the dataset.
+                
+                2. **Feature Likelihoods**: For each feature and species, we:
+                   - Fit a normal distribution to the feature's values for that species
+                   - Calculate how likely the observed feature value is under that distribution
+                   
+                3. **Naive Bayes Assumption**: We assume features are conditionally independent given the species, 
+                   allowing us to multiply individual feature likelihoods to get the joint likelihood.
+                   
+                4. **Posterior Calculation**: Using Bayes' theorem, we calculate the updated probability of each species 
+                   based on the observed feature values.
+                
+                The formula is:
+                
+                P(Species|Features) = P(Features|Species) × P(Species) / P(Features)
+                
+                Where:
+                - P(Features|Species) = P(Feature₁|Species) × P(Feature₂|Species) × ... × P(Featureₙ|Species)
+                
+                This approach allows us to combine evidence from multiple features to improve classification accuracy.
+                
+                ### Advantages Over Single-Feature Analysis
+                
+                1. **Improved accuracy**: Combining features often leads to clearer separation between classes
+                
+                2. **Robustness**: Reduces the impact of noise in any single feature
+                
+                3. **Insight into feature interactions**: Some features may be more discriminative than others
+                
+                4. **Decision boundary visualization**: Shows how the classification changes across feature space
+                
+                ### Limitations
+                
+                1. **Naive Bayes assumption**: Features may not be truly independent
+                
+                2. **Sensitivity to outliers**: Extreme values in the training data can skew the normal distribution parameters
+                
+                3. **Normal distribution assumption**: Feature distributions might not be normal
+                
+                For real-world applications, more sophisticated models like Bayesian networks might be used to 
+                capture more complex feature dependencies.
+                """)
+                
+            st.markdown("---")
+            st.markdown("""
+            ### Next Steps for Exploration
+            
+            1. Try different feature combinations to see which provide the best discrimination between species
+            
+            2. Compare the Naive Bayes approach with other classifiers
+            
+            3. Explore how changing multiple features simultaneously affects the classification
+            """)
+            
 
 elif scenario == "A/B Testing Calculator":
     # TODO: Move this to a separate module
