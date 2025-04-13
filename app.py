@@ -6,6 +6,11 @@ import seaborn as sns
 from sklearn.datasets import load_iris
 from scipy import stats
 
+# Import our modules
+from scenarios.medical_test import render_medical_test
+from scenarios.weather_prediction import render_weather_prediction
+from scenarios.time_series import render_time_series_analysis
+
 # Set page configuration
 st.set_page_config(
     page_title="Simple Bayes Calculator",
@@ -45,204 +50,18 @@ st.sidebar.header("Bayesian Parameters")
 # Scenario selection
 scenario = st.sidebar.selectbox(
     "Select a scenario",
-    ["Medical Test", "Weather Prediction", "Custom Example", "Real World Data Analysis", "A/B Testing Calculator"]
+    ["Medical Test", "Weather Prediction", "Custom Example", "Real World Data Analysis", "A/B Testing Calculator", "Time Series Analysis"]
 )
 
 # Main content based on the selected scenario
 if scenario == "Medical Test":
-    st.header("Medical Test Scenario")
-    st.markdown("""
-    In this scenario, we're calculating the probability that a patient has a disease given a positive test result.
-    - **Prior**: The base rate of the disease in the population
-    - **Sensitivity**: Probability of a positive test if the patient has the disease (true positive rate)
-    - **Specificity**: Probability of a negative test if the patient doesn't have the disease (true negative rate)
-    """)
-    
-    # User inputs for medical test scenario
-    disease_rate = st.slider("Disease prevalence in population (%)", 0.1, 20.0, 1.0, 0.1) / 100
-    sensitivity = st.slider("Test sensitivity (%)", 50.0, 100.0, 95.0, 0.1) / 100
-    specificity = st.slider("Test specificity (%)", 50.0, 100.0, 90.0, 0.1) / 100
-    
-    # Calculate false positive rate
-    false_positive_rate = 1 - specificity
-    
-    # Prior probabilities
-    prior_probs = {
-        "Has Disease": disease_rate,
-        "No Disease": 1 - disease_rate
-    }
-    
-    # Likelihoods of positive test result
-    likelihoods = {
-        "Has Disease": sensitivity,
-        "No Disease": false_positive_rate
-    }
-    
-    # Calculate posteriors
-    posteriors = calculate_posterior(prior_probs, likelihoods)
-    
-    # Create a DataFrame for display
-    data = {
-        "Hypothesis": ["Has Disease", "No Disease"],
-        "Prior Probability": [prior_probs["Has Disease"], prior_probs["No Disease"]],
-        "Likelihood of Positive Test": [likelihoods["Has Disease"], likelihoods["No Disease"]],
-        "Posterior Probability": [posteriors["Has Disease"], posteriors["No Disease"]]
-    }
-    
-    df = pd.DataFrame(data)
-    
-    # Display the table
-    st.subheader("Bayesian Analysis Results")
-    st.dataframe(df.style.format({
-        "Prior Probability": "{:.4f}",
-        "Likelihood of Positive Test": "{:.4f}",
-        "Posterior Probability": "{:.4f}"
-    }))
-    
-    # Display the conclusion
-    st.markdown(f"""
-    ### Interpretation
-    
-    If a patient tests positive, the probability they actually have the disease is **{posteriors["Has Disease"]:.2%}**.
-    
-    This demonstrates Bayes' theorem in action:
-    
-    P(Disease|Positive) = P(Positive|Disease) × P(Disease) / P(Positive)
-    """)
-    
-    # Visualization of prior vs posterior
-    st.subheader("Prior vs Posterior Probabilities")
-    comparison_df = pd.DataFrame({
-        "Probability Type": ["Prior", "Prior", "Posterior", "Posterior"],
-        "Hypothesis": ["Has Disease", "No Disease", "Has Disease", "No Disease"],
-        "Probability": [
-            prior_probs["Has Disease"], 
-            prior_probs["No Disease"],
-            posteriors["Has Disease"],
-            posteriors["No Disease"]
-        ]
-    })
-    
-    fig, ax = plt.subplots(figsize=(10, 6))
-    bars = ax.bar(
-        x=[0, 1, 3, 4], 
-        height=[prior_probs["Has Disease"], prior_probs["No Disease"], 
-                posteriors["Has Disease"], posteriors["No Disease"]],
-        width=0.6,
-        color=["#ff9999", "#66b3ff", "#ff9999", "#66b3ff"]
-    )
-    
-    # Add labels and values on the bars
-    for bar in bars:
-        height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height + 0.01,
-                f'{height:.4f}', ha='center', va='bottom')
-    
-    ax.set_xticks([0.5, 3.5])
-    ax.set_xticklabels(["Prior", "Posterior"])
-    ax.set_ylabel("Probability")
-    ax.set_title("Prior vs Posterior Probabilities")
-    ax.set_ylim(0, 1.1)
-    
-    # Add a legend
-    from matplotlib.patches import Patch
-    legend_elements = [
-        Patch(facecolor='#ff9999', label='Has Disease'),
-        Patch(facecolor='#66b3ff', label='No Disease')
-    ]
-    ax.legend(handles=legend_elements, loc='upper right')
-    
-    st.pyplot(fig)
-
+    render_medical_test()
 elif scenario == "Weather Prediction":
-    st.header("Weather Prediction Scenario")
-    st.markdown("""
-    In this scenario, we're predicting whether it will rain tomorrow based on observed cloud patterns.
-    - **Prior**: The base probability of rain on any given day
-    - **Likelihood**: The probability of seeing clouds given different weather outcomes
-    """)
-    
-    # User inputs for weather scenario
-    rain_rate = st.slider("Base probability of rain on any day (%)", 10.0, 70.0, 30.0, 0.1) / 100
-    clouds_if_rain = st.slider("Probability of clouds if it will rain (%)", 50.0, 100.0, 90.0, 0.1) / 100
-    clouds_if_no_rain = st.slider("Probability of clouds if it won't rain (%)", 5.0, 80.0, 40.0, 0.1) / 100
-    
-    # Prior probabilities
-    prior_probs = {
-        "Rain": rain_rate,
-        "No Rain": 1 - rain_rate
-    }
-    
-    # Likelihoods of observing clouds
-    likelihoods = {
-        "Rain": clouds_if_rain,
-        "No Rain": clouds_if_no_rain
-    }
-    
-    # Calculate posteriors
-    posteriors = calculate_posterior(prior_probs, likelihoods)
-    
-    # Create a DataFrame for display
-    data = {
-        "Hypothesis": ["Rain Tomorrow", "No Rain Tomorrow"],
-        "Prior Probability": [prior_probs["Rain"], prior_probs["No Rain"]],
-        "Likelihood of Clouds Today": [likelihoods["Rain"], likelihoods["No Rain"]],
-        "Posterior Probability": [posteriors["Rain"], posteriors["No Rain"]]
-    }
-    
-    df = pd.DataFrame(data)
-    
-    # Display the table
-    st.subheader("Bayesian Analysis Results")
-    st.dataframe(df.style.format({
-        "Prior Probability": "{:.4f}",
-        "Likelihood of Clouds Today": "{:.4f}",
-        "Posterior Probability": "{:.4f}"
-    }))
-    
-    # Display the conclusion
-    st.markdown(f"""
-    ### Interpretation
-    
-    If you observe clouds today, the probability it will rain tomorrow is **{posteriors["Rain"]:.2%}**.
-    
-    This demonstrates how new evidence (cloud observation) updates our belief about the probability of rain.
-    """)
-    
-    # Visualization of prior vs posterior
-    st.subheader("Prior vs Posterior Probabilities")
-    fig, ax = plt.subplots(figsize=(10, 6))
-    bars = ax.bar(
-        x=[0, 1, 3, 4], 
-        height=[prior_probs["Rain"], prior_probs["No Rain"], 
-                posteriors["Rain"], posteriors["No Rain"]],
-        width=0.6,
-        color=["#9dc6ff", "#ffcf9e", "#9dc6ff", "#ffcf9e"]
-    )
-    
-    # Add labels and values on the bars
-    for bar in bars:
-        height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height + 0.01,
-                f'{height:.4f}', ha='center', va='bottom')
-    
-    ax.set_xticks([0.5, 3.5])
-    ax.set_xticklabels(["Prior", "Posterior"])
-    ax.set_ylabel("Probability")
-    ax.set_title("Prior vs Posterior Probabilities")
-    ax.set_ylim(0, 1.1)
-    
-    # Add a legend
-    from matplotlib.patches import Patch
-    legend_elements = [
-        Patch(facecolor='#9dc6ff', label='Rain'),
-        Patch(facecolor='#ffcf9e', label='No Rain')
-    ]
-    ax.legend(handles=legend_elements, loc='upper right')
-    
-    st.pyplot(fig)
-
+    render_weather_prediction()
+elif scenario == "Time Series Analysis":
+    render_time_series_analysis()
 elif scenario == "Custom Example":
+    # TODO: Move this to a separate module
     st.header("Custom Bayesian Example")
     st.markdown("""
     This is a custom example where you can define your own hypotheses and their probabilities.
@@ -345,6 +164,7 @@ elif scenario == "Custom Example":
     st.pyplot(fig)
 
 elif scenario == "Real World Data Analysis":
+    # TODO: Move this to a separate module
     st.header("Real World Data Analysis: Iris Dataset")
     st.markdown("""
     This scenario applies Bayesian inference to the well-known Iris flower dataset.
@@ -513,6 +333,7 @@ elif scenario == "Real World Data Analysis":
     st.pyplot(fig)
 
 elif scenario == "A/B Testing Calculator":
+    # TODO: Move this to a separate module
     st.header("Bayesian A/B Testing Calculator")
     st.markdown("""
     This tool uses Bayesian statistics to analyze A/B test results. Unlike traditional (frequentist) methods, 
@@ -992,6 +813,131 @@ elif scenario == "A/B Testing Calculator":
     how many more samples you need to reach a desired level of confidence.
     """)
     
+    with st.expander("How does sample size planning work in Bayesian testing?"):
+        st.markdown("""
+        ### Understanding Sample Size in Bayesian A/B Testing
+        
+        Unlike frequentist methods that use power calculations based on p-values, Bayesian sample size planning focuses on:
+        
+        1. **The probability of detecting a true effect** (similar to statistical power)
+        2. **The minimum effect size that matters to your business**
+        3. **The level of certainty you need to make a decision**
+        
+        #### How the calculation works
+        
+        The sample size estimate uses an approximation based on the normal distribution of the difference between two proportions:
+        
+        ```
+        n ≈ 16 × p × (1-p) / (minimum_effect)²
+        ```
+        
+        Where:
+        - n is the required sample size per variant
+        - p is the baseline conversion rate
+        - minimum_effect is the smallest meaningful difference (absolute, not relative)
+        - The constant 16 comes from (zα + zβ)² where zα and zβ correspond to approximately 95% probability
+        
+        #### Interpreting this estimate
+        
+        This formula gives you an approximate sample size needed to:
+        - Detect a true difference of at least the minimum effect size
+        - With the target probability (similar to statistical power)
+        - Assuming your current posterior mean is close to the true conversion rate
+        
+        #### Key insights about sample size
+        
+        1. **Higher baseline conversion rates need smaller samples** - It's easier to detect changes in high conversion rates because there's less variance as a proportion of the mean.
+        
+        2. **Smaller effect sizes require larger samples** - The sample size increases with the square of the minimum effect, so halving the minimum detectable effect requires 4× the sample size.
+        
+        3. **More certainty requires larger samples** - Higher target probabilities require more data.
+        
+        4. **Bayesian analysis can often make decisions with smaller samples** than frequentist methods because:
+           - It directly calculates the probability of B being better than A
+           - It incorporates prior knowledge when available
+           - It doesn't rely on arbitrary significance thresholds
+        
+        #### Example calculation
+        
+        If your baseline conversion rate is 10%, and you want to detect a 2% absolute improvement (12% vs 10%) with 95% probability:
+        
+        ```
+        n ≈ 16 × 0.10 × (1-0.10) / (0.02)² = 16 × 0.10 × 0.90 / 0.0004 = 16 × 0.09 / 0.0004 = 3,600
+        ```
+        
+        You would need approximately 3,600 visitors per variant.
+        """)
+        
+        # Add a visualization of how sample size affects uncertainty
+        st.subheader("How Sample Size Affects Uncertainty")
+        
+        # Create a figure showing posterior distributions with different sample sizes
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        x = np.linspace(0, 0.2, 1000)  # Range of conversion rates to plot
+        
+        # Define different sample sizes
+        sample_sizes = [100, 500, 2000, 10000]
+        colors = ['#FF9999', '#FFCC99', '#99CCFF', '#99FF99']
+        
+        # Base parameters
+        base_rate = 0.1  # 10% conversion rate
+        effect = 0.02  # 2% effect
+        
+        for i, n in enumerate(sample_sizes):
+            # Calculate the parameters for the posterior distribution
+            # Assuming uninformative prior and observed data matching expectations
+            alpha_a = 1 + n * base_rate
+            beta_a = 1 + n * (1 - base_rate)
+            
+            alpha_b = 1 + n * (base_rate + effect)
+            beta_b = 1 + n * (1 - (base_rate + effect))
+            
+            # Plot the posterior distributions
+            posterior_a = stats.beta.pdf(x, alpha_a, beta_a)
+            posterior_b = stats.beta.pdf(x, alpha_b, beta_b)
+            
+            # Scale down the density values to fit multiple curves
+            scale_factor = 1.0
+            if i > 0:
+                scale_factor = 0.8 ** i
+            
+            ax.plot(x, posterior_a * scale_factor, 
+                    color=colors[i], linestyle='-', alpha=0.8,
+                    label=f'A (n={n}): {base_rate:.1%} rate')
+            ax.plot(x, posterior_b * scale_factor, 
+                    color=colors[i], linestyle='--', alpha=0.8,
+                    label=f'B (n={n}): {base_rate+effect:.1%} rate')
+            
+            # Calculate the probability that B > A for this sample size
+            samples_a = np.random.beta(alpha_a, beta_a, 10000)
+            samples_b = np.random.beta(alpha_b, beta_b, 10000)
+            prob_b_better = np.mean(samples_b > samples_a)
+            
+            # Add text annotation about the probability
+            ax.text(0.17, ax.get_ylim()[1] * (0.95 - i*0.15), 
+                    f"n={n}: P(B>A) = {prob_b_better:.1%}",
+                    fontsize=10, color=colors[i], 
+                    bbox=dict(facecolor='white', alpha=0.7, edgecolor=colors[i]))
+        
+        ax.set_xlabel('Conversion Rate')
+        ax.set_ylabel('Posterior Density (scaled)')
+        ax.set_title('Effect of Sample Size on Posterior Distributions')
+        ax.legend(loc='upper left')
+        ax.grid(True, alpha=0.3)
+        
+        st.pyplot(fig)
+        
+        st.markdown("""
+        This visualization shows how increasing the sample size:
+        
+        1. Makes the posterior distributions narrower (more certainty)
+        2. Increases the separation between distributions when a real effect exists
+        3. Increases the probability of correctly detecting that B is better than A
+        
+        Notice how with small samples (n=100), there's substantial overlap between the distributions, even though B truly has a 2% higher conversion rate. As the sample size increases, the distributions separate, making it easier to detect the difference.
+        """)
+    
     target_prob = st.slider("Target probability of detecting a true difference", 0.8, 0.99, 0.95, 0.01)
     min_effect = st.slider("Minimum meaningful effect size (%)", 1.0, 20.0, 5.0, 0.5) / 100
     
@@ -1015,6 +961,17 @@ elif scenario == "A/B Testing Calculator":
         To reach the required sample size, you need approximately:
         - {additional_a} more visitors for variant A
         - {additional_b} more visitors for variant B
+        """)
+        
+        # Add a business context explanation
+        st.info(f"""
+        **Business Context**: If your test is running at a traffic level of 1,000 visitors per day (combined for both variants), 
+        it would take approximately **{(additional_a + additional_b) / 1000:.1f} more days** to reach the recommended sample size.
+        
+        **Recommendation**: When deciding whether to wait for more data, consider:
+        1. The cost of waiting (delayed implementation)
+        2. The risk of making the wrong decision
+        3. The expected value of the improvement if B is truly better
         """)
 
 # Sidebar explanation

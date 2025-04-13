@@ -38,7 +38,7 @@ The app should open automatically in your default web browser. If it doesn't, yo
 
 ## Features
 
-The application provides five different Bayesian probability scenarios:
+The application provides six different Bayesian probability scenarios:
 
 1. **Medical Test Scenario**: Calculate the probability that a patient has a disease given a positive test result.
    - Set disease prevalence, test sensitivity, and test specificity
@@ -66,6 +66,13 @@ The application provides five different Bayesian probability scenarios:
    - Visualize prior and posterior distributions
    - Get recommendations based on the results
    - Estimate required sample size for conclusive tests
+
+6. **Time Series Analysis**: Apply Bayesian methods to time series data.
+   - Detect change points in time series data
+   - Generate Bayesian forecasts with credible intervals
+   - Decompose time series into trend, seasonal, and remainder components
+   - Upload custom data or use synthetic examples
+   - Analyze with various Bayesian time series models
 
 Each scenario includes:
 - Interactive sliders to adjust parameters
@@ -95,3 +102,21 @@ Where:
 - Seaborn
 - scikit-learn
 - SciPy 
+
+## Project Structure
+
+```
+SimpleBayes/
+├── app.py              # Main application entry point
+├── requirements.txt    # Project dependencies
+├── README.md           # Project documentation
+├── utils/              # Utility functions and helpers
+│   ├── __init__.py
+│   └── bayes_utils.py  # Common Bayesian calculation utilities
+└── scenarios/          # Individual scenario implementations
+    ├── __init__.py
+    ├── medical_test.py
+    ├── weather_prediction.py
+    ├── time_series.py
+    └── ... (other scenarios)
+``` 
