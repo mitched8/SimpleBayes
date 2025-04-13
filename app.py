@@ -588,8 +588,9 @@ elif scenario == "Real World Data Analysis":
                                     grid_likelihoods[species] *= stats.norm.pdf(value, mean, std)
                             
                             grid_post = calculate_posterior(prior_probs, grid_likelihoods)
-                            # Get most likely species (0=setosa, 1=versicolor, 2=virginica)
-                            most_likely = iris.target_names.index(max(grid_post, key=grid_post.get))
+                            # Get most likely species and convert to index (0=setosa, 1=versicolor, 2=virginica)
+                            most_likely_species = max(grid_post, key=grid_post.get)
+                            most_likely = list(iris.target_names).index(most_likely_species)
                             grid_posteriors.append(most_likely)
                         
                         # Reshape results
