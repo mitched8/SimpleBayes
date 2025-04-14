@@ -29,45 +29,44 @@ from utils.pattern_recognition import (
 )
 
 def test_data_fetching():
-    """Test function to verify data fetching works"""
-    logger.info("Testing data fetching...")
+    """Test data fetching from local CSV files"""
+    st.write("Testing data fetching from local CSV files...")
     
-    # Test with EURUSD
-    symbol = "EURUSD=X"
-    end_date = datetime.now().date() - timedelta(days=1)
-    start_date = end_date - timedelta(days=30)  # Just 30 days for testing
+    # Use a date range we know exists in the data
+    end_date = datetime(2010, 1, 1).date()
+    start_date = end_date - pd.Timedelta(days=30)
     
-    logger.info(f"Testing with {symbol} from {start_date} to {end_date}")
+    symbols = ["EURUSD"]  # We know this file exists
+    results = {}
     
-    try:
-        # Test direct yfinance fetch
-        logger.info("Testing direct yfinance fetch...")
-        ticker = yf.Ticker(symbol)
-        data = ticker.history(
-            start=datetime.combine(start_date, datetime.min.time()),
-            end=datetime.combine(end_date, datetime.max.time()),
-            interval="1d"
-        )
-        logger.info(f"Direct fetch result - Shape: {data.shape if data is not None else 'None'}")
-        if data is not None and not data.empty:
-            logger.info(f"Data columns: {data.columns.tolist()}")
-            logger.info(f"Data index range: {data.index.min()} to {data.index.max()}")
+    for symbol in symbols:
+        st.write(f"\nTesting with {symbol} from {start_date} to {end_date}")
         
         # Test our fetch_market_data function
-        logger.info("Testing fetch_market_data function...")
-        data = fetch_market_data(
-            symbol=symbol,
-            timeframe="1d",
-            start_date=start_date,
-            end_date=end_date
-        )
-        logger.info(f"fetch_market_data result - Shape: {data.shape if data is not None else 'None'}")
+        st.write("Testing fetch_market_data function...")
+        data = fetch_market_data(symbol, "1d", start_date, end_date)
         
-        return data is not None and not data.empty
+        if data is None or data.empty:
+            st.warning(f"fetch_market_data returned empty data for {symbol}")
+        else:
+            st.success(f"fetch_market_data successful for {symbol}")
+            st.write(f"Data shape: {data.shape}")
+            st.write(f"Date range: {data.index.min()} to {data.index.max()}")
+            
+            # Display sample of the data
+            st.write("Sample of the data:")
+            st.dataframe(data.head())
+            
+            # Show basic statistics
+            st.write("Basic statistics:")
+            st.dataframe(data.describe())
         
-    except Exception as e:
-        logger.error(f"Error in test_data_fetching: {str(e)}", exc_info=True)
-        return False
+        results[symbol] = {
+            "success": not (data is None or data.empty),
+            "rows": data.shape[0] if data is not None and not data.empty else 0
+        }
+    
+    return results
 
 def render_financial_markets():
     """
@@ -83,19 +82,18 @@ def render_financial_markets():
     
     # Test data fetching
     if st.button("Test Data Fetching"):
-        success = test_data_fetching()
-        if success:
-            st.success("Data fetching test successful!")
-        else:
-            st.error("Data fetching test failed. Check logs for details.")
+        results = test_data_fetching()
+        st.subheader("Data Fetching Test Results")
+        for symbol, result in results.items():
+            st.write(f"{symbol}: {result}")
     
     # Data Selection Section
     st.header("Data Selection")
     col1, col2 = st.columns(2)
     
     with col1:
-        # Currency pair selection
-        currency_pairs = ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X"]
+        # Currency pair selection - simplified to just EURUSD
+        currency_pairs = ["EURUSD"]
         selected_pair = st.selectbox(
             "Select Currency Pair",
             currency_pairs,
