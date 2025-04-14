@@ -68,11 +68,89 @@ def test_data_fetching():
     
     return results
 
+def calculate_market_priors(data: pd.DataFrame) -> dict:
+    """
+    Calculate market priors from historical data.
+    Returns dict with mean, std, and other statistical properties.
+    """
+    priors = {}
+    
+    # Calculate return statistics
+    returns = data['Returns'].dropna()
+    priors['returns_mean'] = returns.mean()
+    priors['returns_std'] = returns.std()
+    priors['returns_skew'] = returns.skew()
+    priors['returns_kurtosis'] = returns.kurtosis()
+    
+    # Calculate volatility (using rolling std of returns)
+    volatility = returns.rolling(window=20).std().dropna()
+    priors['volatility_mean'] = volatility.mean()
+    priors['volatility_std'] = volatility.std()
+    
+    # Calculate trend strength (using rolling returns)
+    rolling_returns = returns.rolling(window=20).mean().dropna()
+    priors['trend_mean'] = rolling_returns.mean()
+    priors['trend_std'] = rolling_returns.std()
+    
+    # Calculate probability of positive returns
+    priors['prob_positive_return'] = (returns > 0).mean()
+    
+    return priors
+
+def calculate_bayesian_analysis(historical_data: pd.DataFrame, recent_data: pd.DataFrame) -> dict:
+    """
+    Perform Bayesian analysis using historical priors and recent data.
+    """
+    # Calculate priors from historical data
+    priors = calculate_market_priors(historical_data)
+    
+    # Calculate recent statistics
+    recent_returns = recent_data['Returns'].dropna()
+    recent_stats = {
+        'returns_mean': recent_returns.mean(),
+        'returns_std': recent_returns.std(),
+        'prob_positive_return': (recent_returns > 0).mean()
+    }
+    
+    # Calculate posterior probabilities using Bayesian updating
+    n_historical = len(historical_data)
+    n_recent = len(recent_data)
+    
+    # Weight recent data more heavily
+    weight_recent = 0.7
+    weight_historical = 0.3
+    
+    posterior = {}
+    
+    # Update return expectations
+    posterior['expected_return'] = (
+        weight_historical * priors['returns_mean'] +
+        weight_recent * recent_stats['returns_mean']
+    )
+    
+    # Update volatility expectations
+    posterior['expected_volatility'] = (
+        weight_historical * priors['returns_std'] +
+        weight_recent * recent_stats['returns_std']
+    )
+    
+    # Calculate probability of positive return
+    posterior['prob_positive_return'] = (
+        weight_historical * priors['prob_positive_return'] +
+        weight_recent * recent_stats['prob_positive_return']
+    )
+    
+    # Calculate credible intervals for returns
+    posterior['return_ci_lower'] = posterior['expected_return'] - 1.96 * posterior['expected_volatility']
+    posterior['return_ci_upper'] = posterior['expected_return'] + 1.96 * posterior['expected_volatility']
+    
+    return priors, recent_stats, posterior
+
 def render_financial_markets():
     """
     Main function to render the financial markets analysis page.
     """
-    st.title("Financial Markets Bayesian Analysis")
+    st.title("Bayesian Financial Market Analysis")
     
     # Add disclaimer
     st.warning("""
@@ -110,143 +188,157 @@ def render_financial_markets():
     
     with col2:
         # Date range selection
-        end_date = datetime.now().date() - timedelta(days=1)  # Yesterday
-        start_date = end_date - timedelta(days=30)  # Just 30 days for testing
+        end_date = datetime.now().date()
+        start_date = end_date - timedelta(days=365*5)  # Default to 5 years
         
-        col_start, col_end = st.columns(2)
-        with col_start:
-            start_date = st.date_input(
-                "Start Date",
-                value=start_date,
-                max_value=end_date
-            )
-        with col_end:
-            end_date = st.date_input(
-                "End Date",
-                value=end_date,
-                min_value=start_date
-            )
-    
-    # Fetch and display data
-    try:
-        logger.info(f"Fetching data for {selected_pair} from {start_date} to {end_date}")
-        data = fetch_market_data(
-            symbol=selected_pair,
-            timeframe=selected_timeframe,
-            start_date=start_date,
-            end_date=end_date
+        date_range = st.date_input(
+            "Select Date Range",
+            value=(start_date, end_date),
+            max_value=end_date
         )
         
-        if data is not None and not data.empty:
-            logger.info(f"Data fetched successfully. Shape: {data.shape}")
+        if len(date_range) == 2:
+            start_date, end_date = date_range
+            # Convert to pandas Timestamps
+            start_date = pd.Timestamp(start_date)
+            end_date = pd.Timestamp(end_date)
+    
+    # Fetch full dataset
+    full_data = fetch_market_data(
+        symbol=selected_pair,
+        timeframe=selected_timeframe,
+        start_date=start_date.date(),  # Convert back to date for fetch_market_data
+        end_date=end_date.date()
+    )
+    
+    if full_data is not None:
+        st.success(f"Data fetched successfully. Shape: {full_data.shape}")
+        
+        # Display basic market analysis
+        st.header("Market Analysis")
+        
+        # Display basic data information
+        st.subheader("Market Data Overview")
+        st.dataframe(full_data.head())
+        
+        # Display basic statistics
+        st.subheader("Basic Statistics")
+        st.dataframe(full_data.describe())
+        
+        # Display candlestick chart
+        st.subheader("Price Chart")
+        fig = go.Figure()
+        
+        # Add candlestick chart
+        fig.add_trace(go.Candlestick(
+            x=full_data.index,
+            open=full_data['Open'],
+            high=full_data['High'],
+            low=full_data['Low'],
+            close=full_data['Close'],
+            name='Price'
+        ))
+        
+        fig.update_layout(
+            title=f"{selected_pair} Price Chart",
+            yaxis_title="Price",
+            xaxis_title="Date"
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Bayesian Analysis Section
+        st.header("Bayesian Analysis")
+        
+        # Split data for Bayesian analysis
+        split_date = end_date - timedelta(days=30)  # Last 30 days for recent data
+        split_date = pd.Timestamp(split_date)  # Convert to pandas Timestamp
+        
+        historical_data = full_data[full_data.index < split_date].copy()
+        recent_data = full_data[full_data.index >= split_date].copy()
+        
+        if not recent_data.empty and not historical_data.empty:
+            # Perform Bayesian analysis
+            priors, recent_stats, posterior = calculate_bayesian_analysis(historical_data, recent_data)
             
-            # Calculate technical indicators using TA-Lib
-            data['SMA_20'] = talib.SMA(data['Close'], timeperiod=20)
-            data['RSI'] = talib.RSI(data['Close'], timeperiod=14)
-            data['MACD'], data['MACD_Signal'], data['MACD_Hist'] = talib.MACD(
-                data['Close'],
-                fastperiod=12,
-                slowperiod=26,
-                signalperiod=9
-            )
+            # Display results
+            col1, col2, col3 = st.columns(3)
             
-            # Display basic data information
-            st.subheader("Market Data Overview")
-            st.dataframe(data.head())
+            with col1:
+                st.subheader("Historical Priors")
+                st.write(f"Mean Return: {priors['returns_mean']:.4%}")
+                st.write(f"Volatility: {priors['returns_std']:.4%}")
+                st.write(f"Prob. Positive: {priors['prob_positive_return']:.1%}")
             
-            # Display basic statistics
-            st.subheader("Basic Statistics")
-            st.dataframe(data.describe())
+            with col2:
+                st.subheader("Recent Statistics")
+                st.write(f"Mean Return: {recent_stats['returns_mean']:.4%}")
+                st.write(f"Volatility: {recent_stats['returns_std']:.4%}")
+                st.write(f"Prob. Positive: {recent_stats['prob_positive_return']:.1%}")
             
-            # Display candlestick chart with technical indicators
-            st.subheader("Price Chart")
+            with col3:
+                st.subheader("Posterior Estimates")
+                st.write(f"Expected Return: {posterior['expected_return']:.4%}")
+                st.write(f"Expected Volatility: {posterior['expected_volatility']:.4%}")
+                st.write(f"Prob. Positive: {posterior['prob_positive_return']:.1%}")
+            
+            # Plot distributions
+            st.subheader("Return Distributions")
             fig = go.Figure()
             
-            # Add candlestick chart
-            fig.add_trace(go.Candlestick(
-                x=data.index,
-                open=data['Open'],
-                high=data['High'],
-                low=data['Low'],
-                close=data['Close'],
-                name='Price'
+            # Historical returns distribution
+            hist_returns = historical_data['Returns'].dropna()
+            fig.add_trace(go.Histogram(
+                x=hist_returns,
+                name="Historical Returns",
+                opacity=0.7,
+                nbinsx=50,
+                histnorm='probability'
             ))
             
-            # Add SMA
-            fig.add_trace(go.Scatter(
-                x=data.index,
-                y=data['SMA_20'],
-                name='SMA 20',
-                line=dict(color='orange')
+            # Recent returns distribution
+            recent_returns = recent_data['Returns'].dropna()
+            fig.add_trace(go.Histogram(
+                x=recent_returns,
+                name="Recent Returns",
+                opacity=0.7,
+                nbinsx=30,
+                histnorm='probability'
             ))
             
             fig.update_layout(
-                title=f"{selected_pair} Price Chart",
-                yaxis_title="Price",
-                xaxis_title="Date"
+                title="Historical vs Recent Return Distributions",
+                xaxis_title="Returns",
+                yaxis_title="Probability",
+                barmode='overlay'
             )
-            st.plotly_chart(fig, use_container_width=True)
             
-            # Display technical indicators
-            st.subheader("Technical Indicators")
-            col1, col2 = st.columns(2)
+            st.plotly_chart(fig)
             
-            with col1:
-                # RSI Chart
-                fig_rsi = go.Figure()
-                fig_rsi.add_trace(go.Scatter(
-                    x=data.index,
-                    y=data['RSI'],
-                    name='RSI'
-                ))
-                fig_rsi.add_hline(y=70, line_dash="dash", line_color="red")
-                fig_rsi.add_hline(y=30, line_dash="dash", line_color="green")
-                fig_rsi.update_layout(title="RSI (14)")
-                st.plotly_chart(fig_rsi, use_container_width=True)
+            # Trading Signals
+            st.header("Trading Signals")
+            signal_strength = abs(posterior['expected_return']) / posterior['expected_volatility']
             
-            with col2:
-                # MACD Chart
-                fig_macd = go.Figure()
-                fig_macd.add_trace(go.Scatter(
-                    x=data.index,
-                    y=data['MACD'],
-                    name='MACD'
-                ))
-                fig_macd.add_trace(go.Scatter(
-                    x=data.index,
-                    y=data['MACD_Signal'],
-                    name='Signal'
-                ))
-                fig_macd.add_trace(go.Bar(
-                    x=data.index,
-                    y=data['MACD_Hist'],
-                    name='Histogram'
-                ))
-                fig_macd.update_layout(title="MACD")
-                st.plotly_chart(fig_macd, use_container_width=True)
+            if posterior['expected_return'] > 0:
+                if signal_strength > 0.5:
+                    signal = "Strong Buy"
+                else:
+                    signal = "Weak Buy"
+            else:
+                if signal_strength > 0.5:
+                    signal = "Strong Sell"
+                else:
+                    signal = "Weak Sell"
             
-            # Pattern Recognition Section
-            st.header("Pattern Recognition")
-            patterns = identify_candlestick_patterns(data)
-            
-            # Display detected patterns
-            st.subheader("Detected Patterns")
-            for pattern, dates in patterns.items():
-                if dates:
-                    st.write(f"{pattern}: {len(dates)} occurrences")
-                    st.write(f"Last occurrence: {dates[-1]}")
-            
-            # Bayesian Analysis Section
-            st.header("Bayesian Analysis")
-            # TODO: Implement Bayesian analysis components
+            st.write(f"Signal: {signal}")
+            st.write(f"Signal Strength: {signal_strength:.2f}")
+            st.write(f"95% Credible Interval: [{posterior['return_ci_lower']:.4%}, {posterior['return_ci_upper']:.4%}]")
             
         else:
-            logger.warning(f"No data available for {selected_pair}")
-            st.error("No data available for the selected parameters.")
+            st.warning("Insufficient data for Bayesian analysis. Need both historical and recent data.")
             
-    except Exception as e:
-        logger.error(f"Error in render_financial_markets: {str(e)}", exc_info=True)
-        st.error(f"Error fetching data: {str(e)}")
+    else:
+        st.error("Failed to fetch data. Please try different parameters.")
 
 if __name__ == "__main__":
     render_financial_markets() 
