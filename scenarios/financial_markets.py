@@ -187,28 +187,50 @@ def render_financial_markets():
         )
     
     with col2:
-        # Date range selection
-        end_date = datetime.now().date()
-        start_date = end_date - timedelta(days=365*5)  # Default to 5 years
-        
-        date_range = st.date_input(
-            "Select Date Range",
-            value=(start_date, end_date),
-            max_value=end_date
+        # Get data range from CSV first
+        initial_data = fetch_market_data(
+            symbol=selected_pair,
+            timeframe=selected_timeframe,
+            start_date=date(2009, 1, 1),  # Use a very early date
+            end_date=datetime.now().date()
         )
         
-        if len(date_range) == 2:
-            start_date, end_date = date_range
+        if initial_data is not None:
+            min_date = initial_data.index.min().date()
+            max_date = initial_data.index.max().date()
+            
+            # Date range selection with two separate controls
+            col_start, col_end = st.columns(2)
+            
+            with col_start:
+                start_date = st.date_input(
+                    "From",
+                    value=min_date,
+                    min_value=min_date,
+                    max_value=max_date
+                )
+            
+            with col_end:
+                end_date = st.date_input(
+                    "To",
+                    value=max_date,
+                    min_value=start_date,
+                    max_value=max_date
+                )
+            
             # Convert to pandas Timestamps
             start_date = pd.Timestamp(start_date)
             end_date = pd.Timestamp(end_date)
+        else:
+            st.error("Could not determine data range from CSV file")
+            return
     
     # Fetch full dataset
     full_data = fetch_market_data(
         symbol=selected_pair,
         timeframe=selected_timeframe,
-        start_date=start_date.date(),  # Convert back to date for fetch_market_data
-        end_date=end_date.date()
+        start_date=start_date,  # Already a Timestamp
+        end_date=end_date      # Already a Timestamp
     )
     
     if full_data is not None:

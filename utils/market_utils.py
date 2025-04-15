@@ -2,7 +2,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 from datetime import datetime, date
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Union
 import logging
 
 # Configure logging
@@ -21,8 +21,8 @@ from .pattern_recognition import (
 def fetch_market_data(
     symbol: str,
     timeframe: str = "1d",
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None
+    start_date: Optional[Union[date, pd.Timestamp]] = None,
+    end_date: Optional[Union[date, pd.Timestamp]] = None
 ) -> Optional[pd.DataFrame]:
     """
     Fetch market data from local CSV files.
@@ -30,8 +30,8 @@ def fetch_market_data(
     Args:
         symbol: The market symbol to fetch (e.g., "EURUSD")
         timeframe: The timeframe for the data (e.g., "1d", "1wk", "1mo")
-        start_date: Start date for the data
-        end_date: End date for the data
+        start_date: Start date for the data (date or Timestamp)
+        end_date: End date for the data (date or Timestamp)
     
     Returns:
         DataFrame containing the market data or None if fetch fails
@@ -66,11 +66,11 @@ def fetch_market_data(
         
         # Filter by date range if provided
         if start_date is not None:
-            start_datetime = pd.Timestamp(datetime.combine(start_date, datetime.min.time()))
+            start_datetime = pd.Timestamp(start_date)
             data = data[data.index >= start_datetime]
             
         if end_date is not None:
-            end_datetime = pd.Timestamp(datetime.combine(end_date, datetime.max.time()))
+            end_datetime = pd.Timestamp(end_date)
             data = data[data.index <= end_datetime]
         
         if data.empty:
