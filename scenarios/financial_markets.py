@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, date
 from typing import Dict, List, Tuple, Optional
 import plotly.graph_objects as go
 import logging
+import scipy.stats
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -70,81 +71,345 @@ def test_data_fetching():
 
 def calculate_market_priors(data: pd.DataFrame) -> dict:
     """
-    Calculate market priors from historical data.
-    Returns dict with mean, std, and other statistical properties.
+    Calculate market priors from historical data using proper distributions.
+    Returns dict with distribution parameters.
     """
     priors = {}
     
     # Calculate return statistics
     returns = data['Returns'].dropna()
-    priors['returns_mean'] = returns.mean()
-    priors['returns_std'] = returns.std()
-    priors['returns_skew'] = returns.skew()
-    priors['returns_kurtosis'] = returns.kurtosis()
+    
+    # Fit normal distribution to historical returns
+    mu, std = scipy.stats.norm.fit(returns)
+    priors['returns_dist'] = scipy.stats.norm(mu, std)
+    priors['returns_mean'] = mu
+    priors['returns_std'] = std
     
     # Calculate volatility (using rolling std of returns)
     volatility = returns.rolling(window=20).std().dropna()
+    
+    # Fit gamma distribution to volatility (always positive)
+    alpha, loc, beta = scipy.stats.gamma.fit(volatility)
+    priors['volatility_dist'] = scipy.stats.gamma(alpha, loc, beta)
     priors['volatility_mean'] = volatility.mean()
     priors['volatility_std'] = volatility.std()
     
-    # Calculate trend strength (using rolling returns)
-    rolling_returns = returns.rolling(window=20).mean().dropna()
-    priors['trend_mean'] = rolling_returns.mean()
-    priors['trend_std'] = rolling_returns.std()
-    
-    # Calculate probability of positive returns
-    priors['prob_positive_return'] = (returns > 0).mean()
+    # Store raw data for plotting
+    priors['returns_data'] = returns
+    priors['volatility_data'] = volatility
     
     return priors
 
-def calculate_bayesian_analysis(historical_data: pd.DataFrame, recent_data: pd.DataFrame) -> dict:
+def calculate_likelihood(data: pd.DataFrame) -> dict:
     """
-    Perform Bayesian analysis using historical priors and recent data.
+    Calculate likelihood from recent data.
     """
-    # Calculate priors from historical data
-    priors = calculate_market_priors(historical_data)
+    likelihood = {}
     
-    # Calculate recent statistics
-    recent_returns = recent_data['Returns'].dropna()
-    recent_stats = {
-        'returns_mean': recent_returns.mean(),
-        'returns_std': recent_returns.std(),
-        'prob_positive_return': (recent_returns > 0).mean()
-    }
+    returns = data['Returns'].dropna()
     
-    # Calculate posterior probabilities using Bayesian updating
-    n_historical = len(historical_data)
-    n_recent = len(recent_data)
+    # Fit normal distribution to recent returns
+    mu, std = scipy.stats.norm.fit(returns)
+    likelihood['returns_dist'] = scipy.stats.norm(mu, std)
+    likelihood['returns_mean'] = mu
+    likelihood['returns_std'] = std
     
-    # Weight recent data more heavily
-    weight_recent = 0.7
-    weight_historical = 0.3
+    # Calculate recent volatility
+    volatility = returns.rolling(window=20).std().dropna()
     
+    # Fit gamma distribution to volatility
+    alpha, loc, beta = scipy.stats.gamma.fit(volatility)
+    likelihood['volatility_dist'] = scipy.stats.gamma(alpha, loc, beta)
+    
+    # Store raw data for plotting
+    likelihood['returns_data'] = returns
+    likelihood['volatility_data'] = volatility
+    
+    return likelihood
+
+def calculate_posterior(priors: dict, likelihood: dict, x_range: np.ndarray) -> dict:
+    """
+    Calculate posterior distributions using Bayes theorem.
+    """
     posterior = {}
     
-    # Update return expectations
-    posterior['expected_return'] = (
-        weight_historical * priors['returns_mean'] +
-        weight_recent * recent_stats['returns_mean']
-    )
+    # For returns (using grid approximation for posterior)
+    prior_returns = priors['returns_dist'].pdf(x_range)
+    likelihood_returns = likelihood['returns_dist'].pdf(x_range)
+    posterior_returns = prior_returns * likelihood_returns
+    posterior_returns /= np.trapz(posterior_returns, x_range)  # Normalize
     
-    # Update volatility expectations
-    posterior['expected_volatility'] = (
-        weight_historical * priors['returns_std'] +
-        weight_recent * recent_stats['returns_std']
-    )
+    # Store posterior distribution and statistics
+    posterior['returns_x'] = x_range
+    posterior['returns_pdf'] = posterior_returns
+    posterior['returns_mean'] = np.average(x_range, weights=posterior_returns)
+    posterior['returns_std'] = np.sqrt(np.average((x_range - posterior['returns_mean'])**2, weights=posterior_returns))
+    
+    # Calculate credible intervals (95%)
+    cumsum = np.cumsum(posterior_returns) / np.sum(posterior_returns)
+    posterior['returns_ci_lower'] = x_range[np.searchsorted(cumsum, 0.025)]
+    posterior['returns_ci_upper'] = x_range[np.searchsorted(cumsum, 0.975)]
     
     # Calculate probability of positive return
-    posterior['prob_positive_return'] = (
-        weight_historical * priors['prob_positive_return'] +
-        weight_recent * recent_stats['prob_positive_return']
+    positive_idx = x_range > 0
+    posterior['prob_positive_return'] = np.trapz(posterior_returns[positive_idx], x_range[positive_idx])
+    
+    return posterior
+
+def calculate_rolling_bayesian_analysis(data: pd.DataFrame, window_size: int, condition_func) -> tuple:
+    """
+    Calculate Bayesian analysis using rolling windows and condition-based subsetting.
+    """
+    # Calculate returns if not already present
+    if 'Returns' not in data.columns:
+        data['Returns'] = data['Close'].pct_change()
+    
+    # Create rolling windows
+    windows = []
+    similar_periods_mask = np.zeros(len(data), dtype=bool)  # Track similar periods
+    window_indices = []  # Track indices of similar windows
+    
+    for i in range(len(data) - window_size + 1):
+        window = data.iloc[i:i + window_size]
+        windows.append(window)
+        if condition_func(window):
+            similar_periods_mask[i:i + window_size] = True
+            window_indices.append(i)
+    
+    # Get current window (most recent data)
+    current_window = windows[-1]
+    
+    # Get similar windows (excluding current window)
+    similar_windows = [windows[i] for i in window_indices[:-1]]  # Exclude last window if it matches
+    similar_periods_count = len(similar_windows)
+    total_periods = len(data)  # Total number of observations in dataset
+    
+    if not similar_windows:
+        return None, None, None, 0, None, total_periods
+    
+    # Combine similar windows for prior
+    historical_data = pd.concat(similar_windows)
+    
+    # Calculate priors from similar historical windows
+    priors = calculate_market_priors(historical_data)
+    
+    # Calculate likelihood from current window
+    likelihood = calculate_likelihood(current_window)
+    
+    # Define range for posterior calculation
+    x_range = np.linspace(
+        min(priors['returns_mean'] - 4*priors['returns_std'],
+            likelihood['returns_mean'] - 4*likelihood['returns_std']),
+        max(priors['returns_mean'] + 4*priors['returns_std'],
+            likelihood['returns_mean'] + 4*likelihood['returns_std']),
+        1000
     )
     
-    # Calculate credible intervals for returns
-    posterior['return_ci_lower'] = posterior['expected_return'] - 1.96 * posterior['expected_volatility']
-    posterior['return_ci_upper'] = posterior['expected_return'] + 1.96 * posterior['expected_volatility']
+    # Calculate posterior
+    posterior = calculate_posterior(priors, likelihood, x_range)
     
-    return priors, recent_stats, posterior
+    return priors, likelihood, posterior, similar_periods_count, similar_periods_mask, total_periods
+
+def weekly_return_condition(threshold: float):
+    """Create a condition function based on weekly return threshold"""
+    def condition(window: pd.DataFrame) -> bool:
+        weekly_return = (window['Close'].iloc[-1] / window['Close'].iloc[-5] - 1) 
+        return abs(weekly_return) >= threshold
+    return condition
+
+def volatility_condition(threshold: float):
+    """Create a condition function based on volatility threshold"""
+    def condition(window: pd.DataFrame) -> bool:
+        volatility = window['Returns'].std()
+        return volatility >= threshold
+    return condition
+
+def trend_condition(threshold: float):
+    """Create a condition function based on trend strength"""
+    def condition(window: pd.DataFrame) -> bool:
+        trend = (window['Close'].iloc[-1] - window['Close'].iloc[0]) / window['Close'].iloc[0]
+        return abs(trend) >= threshold
+    return condition
+
+def plot_distributions(priors: dict, likelihood: dict, posterior: dict) -> go.Figure:
+    """
+    Plot prior, likelihood, and posterior distributions.
+    """
+    fig = go.Figure()
+    
+    # Plot prior distribution
+    fig.add_trace(go.Scatter(
+        x=posterior['returns_x'],
+        y=priors['returns_dist'].pdf(posterior['returns_x']),
+        name='Prior',
+        line=dict(color='blue', dash='dash')
+    ))
+    
+    # Plot likelihood
+    fig.add_trace(go.Scatter(
+        x=posterior['returns_x'],
+        y=likelihood['returns_dist'].pdf(posterior['returns_x']),
+        name='Likelihood',
+        line=dict(color='green', dash='dash')
+    ))
+    
+    # Plot posterior
+    fig.add_trace(go.Scatter(
+        x=posterior['returns_x'],
+        y=posterior['returns_pdf'],
+        name='Posterior',
+        line=dict(color='red')
+    ))
+    
+    # Add credible intervals
+    fig.add_vline(x=posterior['returns_ci_lower'], line_dash="dash", line_color="gray")
+    fig.add_vline(x=posterior['returns_ci_upper'], line_dash="dash", line_color="gray")
+    fig.add_vline(x=posterior['returns_mean'], line_color="red")
+    
+    fig.update_layout(
+        title="Return Distributions",
+        xaxis_title="Returns",
+        yaxis_title="Density",
+        showlegend=True
+    )
+    
+    return fig
+
+def calculate_distribution_stats(data: np.ndarray, weights: np.ndarray = None) -> dict:
+    """Calculate detailed statistics for a distribution"""
+    if weights is not None:
+        weights = weights / np.sum(weights)  # Normalize weights
+        mean = np.average(data, weights=weights)
+        var = np.average((data - mean)**2, weights=weights)
+        std = np.sqrt(var)
+        
+        # Calculate weighted percentiles
+        cumsum = np.cumsum(weights)
+        idx_25 = np.searchsorted(cumsum, 0.25)
+        idx_50 = np.searchsorted(cumsum, 0.50)
+        idx_75 = np.searchsorted(cumsum, 0.75)
+        
+        sorted_indices = np.argsort(data)
+        sorted_data = data[sorted_indices]
+        q1 = sorted_data[idx_25]
+        median = sorted_data[idx_50]
+        q3 = sorted_data[idx_75]
+        
+        # Calculate skewness and kurtosis
+        skewness = np.average(((data - mean)/std)**3, weights=weights)
+        kurtosis = np.average(((data - mean)/std)**4, weights=weights)
+        
+        # Count of effective observations (sum of weights)
+        count = len(data)
+    else:
+        mean = np.mean(data)
+        std = np.std(data)
+        q1, median, q3 = np.percentile(data, [25, 50, 75])
+        skewness = scipy.stats.skew(data)
+        kurtosis = scipy.stats.kurtosis(data)
+        count = len(data)
+    
+    return {
+        'count': count,
+        'mean': mean,
+        'std': std,
+        'median': median,
+        'q1': q1,
+        'q3': q3,
+        'skewness': skewness,
+        'kurtosis': kurtosis,
+        'iqr': q3 - q1
+    }
+
+def plot_time_series_with_conditions(data: pd.DataFrame, similar_periods_mask: np.ndarray) -> go.Figure:
+    """Plot time series with highlighted similar periods"""
+    fig = go.Figure()
+    
+    # Plot full price series
+    fig.add_trace(go.Scatter(
+        x=data.index,
+        y=data['Close'],
+        name='Price',
+        line=dict(color='gray', width=1)
+    ))
+    
+    # Plot similar periods
+    similar_data = data[similar_periods_mask].copy()
+    fig.add_trace(go.Scatter(
+        x=similar_data.index,
+        y=similar_data['Close'],
+        name='Similar Periods',
+        mode='markers',
+        marker=dict(
+            color='red',
+            size=6,
+            symbol='circle'
+        )
+    ))
+    
+    fig.update_layout(
+        title="Price Series with Similar Periods Highlighted",
+        xaxis_title="Date",
+        yaxis_title="Price",
+        showlegend=True
+    )
+    
+    return fig
+
+def display_distribution_comparison(priors: dict, posterior: dict, similar_periods_count: int, total_periods: int):
+    """Display a comparison table of prior and posterior distribution statistics"""
+    # Calculate stats for prior distribution
+    prior_stats = calculate_distribution_stats(
+        posterior['returns_x'],
+        priors['returns_dist'].pdf(posterior['returns_x'])
+    )
+    prior_stats['count'] = total_periods  # Use total number of periods for prior
+    
+    # Calculate stats for posterior distribution
+    posterior_stats = calculate_distribution_stats(
+        posterior['returns_x'],
+        posterior['returns_pdf']
+    )
+    posterior_stats['count'] = similar_periods_count  # Use number of similar periods for posterior
+    
+    # Create comparison DataFrame
+    stats_df = pd.DataFrame({
+        'Statistic': [
+            'Number of Observations',
+            'Mean Return',
+            'Standard Deviation',
+            'Median Return',
+            'Q1 (25th percentile)',
+            'Q3 (75th percentile)',
+            'IQR',
+            'Skewness',
+            'Kurtosis'
+        ],
+        'Prior': [
+            f"{prior_stats['count']:,d}",  # Format with thousands separator
+            f"{prior_stats['mean']:.4%}",
+            f"{prior_stats['std']:.4%}",
+            f"{prior_stats['median']:.4%}",
+            f"{prior_stats['q1']:.4%}",
+            f"{prior_stats['q3']:.4%}",
+            f"{prior_stats['iqr']:.4%}",
+            f"{prior_stats['skewness']:.3f}",
+            f"{prior_stats['kurtosis']:.3f}"
+        ],
+        'Posterior': [
+            f"{posterior_stats['count']:,d}",  # Format with thousands separator
+            f"{posterior_stats['mean']:.4%}",
+            f"{posterior_stats['std']:.4%}",
+            f"{posterior_stats['median']:.4%}",
+            f"{posterior_stats['q1']:.4%}",
+            f"{posterior_stats['q3']:.4%}",
+            f"{posterior_stats['iqr']:.4%}",
+            f"{posterior_stats['skewness']:.3f}",
+            f"{posterior_stats['kurtosis']:.3f}"
+        ]
+    })
+    
+    return stats_df
 
 def render_financial_markets():
     """
@@ -234,6 +499,10 @@ def render_financial_markets():
     )
     
     if full_data is not None:
+        # Calculate returns if not already present
+        if 'Returns' not in full_data.columns:
+            full_data['Returns'] = full_data['Close'].pct_change()
+        
         st.success(f"Data fetched successfully. Shape: {full_data.shape}")
         
         # Display basic market analysis
@@ -272,92 +541,128 @@ def render_financial_markets():
         # Bayesian Analysis Section
         st.header("Bayesian Analysis")
         
-        # Split data for Bayesian analysis
-        split_date = end_date - timedelta(days=30)  # Last 30 days for recent data
-        split_date = pd.Timestamp(split_date)  # Convert to pandas Timestamp
+        # Analysis Parameters
+        st.subheader("Analysis Parameters")
+        col1, col2 = st.columns(2)
         
-        historical_data = full_data[full_data.index < split_date].copy()
-        recent_data = full_data[full_data.index >= split_date].copy()
-        
-        if not recent_data.empty and not historical_data.empty:
-            # Perform Bayesian analysis
-            priors, recent_stats, posterior = calculate_bayesian_analysis(historical_data, recent_data)
-            
-            # Display results
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.subheader("Historical Priors")
-                st.write(f"Mean Return: {priors['returns_mean']:.4%}")
-                st.write(f"Volatility: {priors['returns_std']:.4%}")
-                st.write(f"Prob. Positive: {priors['prob_positive_return']:.1%}")
-            
-            with col2:
-                st.subheader("Recent Statistics")
-                st.write(f"Mean Return: {recent_stats['returns_mean']:.4%}")
-                st.write(f"Volatility: {recent_stats['returns_std']:.4%}")
-                st.write(f"Prob. Positive: {recent_stats['prob_positive_return']:.1%}")
-            
-            with col3:
-                st.subheader("Posterior Estimates")
-                st.write(f"Expected Return: {posterior['expected_return']:.4%}")
-                st.write(f"Expected Volatility: {posterior['expected_volatility']:.4%}")
-                st.write(f"Prob. Positive: {posterior['prob_positive_return']:.1%}")
-            
-            # Plot distributions
-            st.subheader("Return Distributions")
-            fig = go.Figure()
-            
-            # Historical returns distribution
-            hist_returns = historical_data['Returns'].dropna()
-            fig.add_trace(go.Histogram(
-                x=hist_returns,
-                name="Historical Returns",
-                opacity=0.7,
-                nbinsx=50,
-                histnorm='probability'
-            ))
-            
-            # Recent returns distribution
-            recent_returns = recent_data['Returns'].dropna()
-            fig.add_trace(go.Histogram(
-                x=recent_returns,
-                name="Recent Returns",
-                opacity=0.7,
-                nbinsx=30,
-                histnorm='probability'
-            ))
-            
-            fig.update_layout(
-                title="Historical vs Recent Return Distributions",
-                xaxis_title="Returns",
-                yaxis_title="Probability",
-                barmode='overlay'
+        with col1:
+            window_size = st.slider(
+                "Rolling Window Size (days)",
+                min_value=5,
+                max_value=90,
+                value=30,
+                step=5,
+                help="Size of the rolling window for analysis"
             )
             
-            st.plotly_chart(fig)
+            condition_type = st.selectbox(
+                "Condition Type",
+                ["Weekly Return", "Volatility", "Trend"],
+                help="Type of condition to identify similar market periods"
+            )
+        
+        with col2:
+            threshold = st.slider(
+                "Condition Threshold",
+                min_value=0.0,
+                max_value=0.1,
+                value=0.02,
+                step=0.005,
+                format="%.3f",
+                help="Threshold for the selected condition"
+            )
+        
+        # Create condition function based on user selection
+        if condition_type == "Weekly Return":
+            condition_func = weekly_return_condition(threshold)
+            condition_description = f"Periods with weekly returns >= {threshold:.1%}"
+        elif condition_type == "Volatility":
+            condition_func = volatility_condition(threshold)
+            condition_description = f"Periods with volatility >= {threshold:.1%}"
+        else:  # Trend
+            condition_func = trend_condition(threshold)
+            condition_description = f"Periods with trend strength >= {threshold:.1%}"
+        
+        st.write(f"Analyzing similar periods based on: {condition_description}")
+        
+        if full_data is not None and len(full_data) >= window_size:
+            # Perform rolling Bayesian analysis
+            priors, likelihood, posterior, similar_periods_count, similar_periods_mask, total_periods = calculate_rolling_bayesian_analysis(
+                full_data,
+                window_size,
+                condition_func
+            )
             
-            # Trading Signals
-            st.header("Trading Signals")
-            signal_strength = abs(posterior['expected_return']) / posterior['expected_volatility']
-            
-            if posterior['expected_return'] > 0:
-                if signal_strength > 0.5:
-                    signal = "Strong Buy"
+            if priors is not None:
+                # Display number of similar periods found
+                st.info(f"Found {similar_periods_count:,d} similar periods out of {total_periods:,d} total observations.")
+                
+                # Display results
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.subheader("Historical Priors")
+                    st.write(f"Mean Return: {priors['returns_mean']:.4%}")
+                    st.write(f"Volatility: {priors['returns_std']:.4%}")
+                
+                with col2:
+                    st.subheader("Recent Window")
+                    st.write(f"Mean Return: {likelihood['returns_mean']:.4%}")
+                    st.write(f"Volatility: {likelihood['returns_std']:.4%}")
+                
+                with col3:
+                    st.subheader("Posterior Estimates")
+                    st.write(f"Expected Return: {posterior['returns_mean']:.4%}")
+                    st.write(f"95% Credible Interval:")
+                    st.write(f"[{posterior['returns_ci_lower']:.4%}, {posterior['returns_ci_upper']:.4%}]")
+                    st.write(f"Prob. Positive: {posterior['prob_positive_return']:.1%}")
+                
+                # Plot distributions
+                st.plotly_chart(plot_distributions(priors, likelihood, posterior))
+                
+                # Plot time series with similar periods
+                st.plotly_chart(plot_time_series_with_conditions(full_data, similar_periods_mask))
+                
+                # Display detailed statistics comparison
+                st.subheader("Distribution Statistics Comparison")
+                st.write("Comparing the prior and posterior distributions:")
+                stats_df = display_distribution_comparison(priors, posterior, similar_periods_count, total_periods)
+                st.table(stats_df)
+                
+                # Add interpretation
+                st.write("""
+                **Key Statistics Interpretation:**
+                - **Number of Observations**: Count of similar periods used in the analysis
+                - **Mean/Median**: Center of the distribution, representing expected returns
+                - **Standard Deviation**: Measure of volatility/uncertainty
+                - **Q1/Q3**: Shows the range where 50% of returns fall
+                - **IQR**: Interquartile range, showing spread of the middle 50% of data
+                - **Skewness**: Measures asymmetry (0 is symmetric, >0 right-skewed, <0 left-skewed)
+                - **Kurtosis**: Measures tail heaviness (3 is normal, >3 heavy-tailed, <3 light-tailed)
+                """)
+                
+                # Trading Signals
+                st.header("Trading Signals")
+                signal_strength = abs(posterior['returns_mean']) / posterior['returns_std']
+                
+                if posterior['returns_mean'] > 0:
+                    if posterior['prob_positive_return'] > 0.75:
+                        signal = "Strong Buy"
+                    else:
+                        signal = "Weak Buy"
                 else:
-                    signal = "Weak Buy"
+                    if posterior['prob_positive_return'] < 0.25:
+                        signal = "Strong Sell"
+                    else:
+                        signal = "Weak Sell"
+                
+                st.write(f"Signal: {signal}")
+                st.write(f"Signal Strength: {signal_strength:.2f}")
+                st.write(f"Probability of Positive Return: {posterior['prob_positive_return']:.1%}")
             else:
-                if signal_strength > 0.5:
-                    signal = "Strong Sell"
-                else:
-                    signal = "Weak Sell"
-            
-            st.write(f"Signal: {signal}")
-            st.write(f"Signal Strength: {signal_strength:.2f}")
-            st.write(f"95% Credible Interval: [{posterior['return_ci_lower']:.4%}, {posterior['return_ci_upper']:.4%}]")
-            
+                st.warning("No similar periods found with the current conditions. Try adjusting the threshold.")
         else:
-            st.warning("Insufficient data for Bayesian analysis. Need both historical and recent data.")
+            st.error("Insufficient data for the selected window size.")
             
     else:
         st.error("Failed to fetch data. Please try different parameters.")
