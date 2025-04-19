@@ -9,16 +9,14 @@ from typing import Dict, List, Tuple, Optional
 import plotly.graph_objects as go
 import logging
 import scipy.stats
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Import utility functions
 from utils.market_utils import (
     fetch_market_data,
-    calculate_returns,
-    identify_candlestick_patterns
+    calculate_rsi,
+    calculate_bollinger_bands,
+    calculate_macd,
+    calculate_moving_averages,
+    get_indicator_states,
+    calculate_forward_returns
 )
 from utils.pattern_recognition import (
     detect_doji,
@@ -28,6 +26,10 @@ from utils.pattern_recognition import (
     detect_evening_star,
     detect_pin_bar
 )
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def test_data_fetching():
     """Test data fetching from local CSV files"""
@@ -411,6 +413,126 @@ def display_distribution_comparison(priors: dict, posterior: dict, similar_perio
     
     return stats_df
 
+def calculate_indicator_posteriors(data: pd.DataFrame, indicator_params: dict) -> dict:
+    """Calculate Bayesian posteriors for each technical indicator state"""
+    # Get indicator states
+    states = get_indicator_states(
+        data,
+        rsi_period=indicator_params['rsi_period'],
+        rsi_high=indicator_params['rsi_high'],
+        rsi_low=indicator_params['rsi_low'],
+        bb_period=indicator_params['bb_period'],
+        bb_std=indicator_params['bb_std'],
+        bb_threshold=indicator_params['bb_threshold'],
+        macd_fast=indicator_params['macd_fast'],
+        macd_slow=indicator_params['macd_slow'],
+        macd_signal=indicator_params['macd_signal'],
+        ma_short=indicator_params['ma_short'],
+        ma_long=indicator_params['ma_long']
+    )
+    
+    # Calculate forward returns
+    forward_returns = calculate_forward_returns(data)
+    
+    # Calculate posteriors for each state
+    posteriors = {}
+    for state_name, state_mask in states.items():
+        if state_mask.sum() > 0:  # Only if we have examples of this state
+            state_returns = forward_returns[state_mask]['forward_5d'].dropna()
+            
+            if len(state_returns) > 0:
+                # Calculate distribution parameters
+                mean = state_returns.mean()
+                std = state_returns.std()
+                
+                # Create posterior distribution
+                posteriors[state_name] = {
+                    'returns_mean': mean,
+                    'returns_std': std,
+                    'count': len(state_returns),
+                    'prob_positive': (state_returns > 0).mean(),
+                    'returns_dist': scipy.stats.norm(mean, std),
+                    'returns_x': np.linspace(mean - 4*std, mean + 4*std, 1000),
+                    'returns_pdf': scipy.stats.norm(mean, std).pdf(
+                        np.linspace(mean - 4*std, mean + 4*std, 1000)
+                    ),
+                    'returns_ci_lower': mean - 1.96 * std,
+                    'returns_ci_upper': mean + 1.96 * std
+                }
+    
+    return posteriors
+
+def display_indicator_comparison(priors: dict, indicator_posteriors: dict, total_periods: int) -> pd.DataFrame:
+    """Display a comparison table of prior and indicator-based posterior distributions"""
+    # Create x-range for distributions based on all available data
+    all_means = [priors['returns_mean']]
+    all_stds = [priors['returns_std']]
+    
+    for posterior in indicator_posteriors.values():
+        all_means.append(posterior['returns_mean'])
+        all_stds.append(posterior['returns_std'])
+    
+    # Create a common x-range that covers all distributions
+    min_x = min(all_means) - 4 * max(all_stds)
+    max_x = max(all_means) + 4 * max(all_stds)
+    x_range = np.linspace(min_x, max_x, 1000)
+    
+    # Calculate prior stats using the common x-range
+    prior_pdf = priors['returns_dist'].pdf(x_range)
+    prior_stats = calculate_distribution_stats(x_range, prior_pdf)
+    prior_stats['count'] = total_periods
+    
+    # Create DataFrame first with the Statistic column
+    stats_df = pd.DataFrame({
+        'Statistic': [
+            'Number of Observations',
+            'Mean Return',
+            'Standard Deviation',
+            'Median Return',
+            'Q1 (25th percentile)',
+            'Q3 (75th percentile)',
+            'IQR',
+            'Skewness',
+            'Kurtosis'
+        ]
+    })
+    
+    # Add Prior column
+    stats_df['Prior'] = [
+        f"{prior_stats['count']:,d}",
+        f"{prior_stats['mean']:.4%}",
+        f"{prior_stats['std']:.4%}",
+        f"{prior_stats['median']:.4%}",
+        f"{prior_stats['q1']:.4%}",
+        f"{prior_stats['q3']:.4%}",
+        f"{prior_stats['iqr']:.4%}",
+        f"{prior_stats['skewness']:.3f}",
+        f"{prior_stats['kurtosis']:.3f}"
+    ]
+    
+    # Add posterior stats for each indicator state
+    for state_name, posterior in indicator_posteriors.items():
+        column_name = state_name.replace('_', ' ').title()
+        
+        # Calculate stats for this posterior using the common x-range
+        posterior_pdf = posterior['returns_dist'].pdf(x_range)
+        stats = calculate_distribution_stats(x_range, posterior_pdf)
+        stats['count'] = posterior['count']
+        
+        stats_df[column_name] = [
+            f"{stats['count']:,d}",
+            f"{stats['mean']:.4%}",
+            f"{stats['std']:.4%}",
+            f"{stats['median']:.4%}",
+            f"{stats['q1']:.4%}",
+            f"{stats['q3']:.4%}",
+            f"{stats['iqr']:.4%}",
+            f"{stats['skewness']:.3f}",
+            f"{stats['kurtosis']:.3f}"
+        ]
+    
+    return stats_df
+
 def render_financial_markets():
     """
     Main function to render the financial markets analysis page.
@@ -663,6 +785,107 @@ def render_financial_markets():
                 st.warning("No similar periods found with the current conditions. Try adjusting the threshold.")
         else:
             st.error("Insufficient data for the selected window size.")
+            
+        # Add Technical Indicator Analysis
+        st.header("Technical Indicator Analysis")
+        
+        # Technical Indicator Parameters
+        st.subheader("Indicator Parameters")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # RSI Parameters
+            st.write("**RSI Parameters**")
+            rsi_period = st.slider("RSI Period", 5, 30, 14)
+            rsi_high = st.slider("RSI Overbought", 60, 90, 70)
+            rsi_low = st.slider("RSI Oversold", 10, 40, 30)
+            
+            # MACD Parameters
+            st.write("**MACD Parameters**")
+            macd_fast = st.slider("MACD Fast Period", 5, 20, 12)
+            macd_slow = st.slider("MACD Slow Period", 15, 40, 26)
+            macd_signal = st.slider("MACD Signal Period", 5, 20, 9)
+        
+        with col2:
+            # Bollinger Bands Parameters
+            st.write("**Bollinger Bands Parameters**")
+            bb_period = st.slider("BB Period", 5, 40, 20)
+            bb_std = st.slider("BB Standard Deviations", 1.0, 3.0, 2.0, 0.1)
+            bb_threshold = st.slider("BB Threshold", 0.01, 0.10, 0.05, 0.01)
+            
+            # Moving Average Parameters
+            st.write("**Moving Average Parameters**")
+            ma_short = st.slider("Short MA Period", 5, 50, 20)
+            ma_long = st.slider("Long MA Period", 20, 100, 50)
+        
+        # Collect all parameters
+        indicator_params = {
+            'rsi_period': rsi_period,
+            'rsi_high': rsi_high,
+            'rsi_low': rsi_low,
+            'bb_period': bb_period,
+            'bb_std': bb_std,
+            'bb_threshold': bb_threshold,
+            'macd_fast': macd_fast,
+            'macd_slow': macd_slow,
+            'macd_signal': macd_signal,
+            'ma_short': ma_short,
+            'ma_long': ma_long
+        }
+        
+        # Calculate indicator-based posteriors
+        indicator_posteriors = calculate_indicator_posteriors(full_data, indicator_params)
+        
+        if indicator_posteriors:
+            # Display indicator statistics comparison
+            st.subheader("Technical Indicator Statistics Comparison")
+            st.write("Comparing returns distribution across different technical conditions:")
+            stats_df = display_indicator_comparison(priors, indicator_posteriors, total_periods)
+            st.table(stats_df)
+            
+            # Add interpretation
+            st.write("""
+            **Technical Indicator Statistics Interpretation:**
+            - Each column shows the return distribution when that indicator condition is met
+            - Compare the mean returns and probabilities across different signals
+            - Higher observation counts indicate more frequent signals
+            - Lower standard deviations suggest more reliable signals
+            - Skewness and kurtosis help identify potential outlier effects
+            """)
+            
+            # Current Indicator States
+            st.subheader("Current Technical Conditions")
+            current_states = get_indicator_states(full_data.iloc[-20:], **indicator_params)
+            active_signals = [
+                state.replace('_', ' ').title()
+                for state, mask in current_states.items()
+                if mask.iloc[-1]
+            ]
+            
+            if active_signals:
+                st.write("**Active Signals:**")
+                for signal in active_signals:
+                    st.write(f"- {signal}")
+                
+                # Get the posterior stats for active signals
+                active_posteriors = {
+                    state: indicator_posteriors[state]
+                    for state in current_states.keys()
+                    if current_states[state].iloc[-1]
+                    and state in indicator_posteriors
+                }
+                
+                if active_posteriors:
+                    st.write("**Expected Returns for Active Signals:**")
+                    for state, posterior in active_posteriors.items():
+                        st.write(f"- {state.replace('_', ' ').title()}: "
+                               f"Mean: {posterior['returns_mean']:.2%}, "
+                               f"Prob. Positive: {posterior['prob_positive']:.1%}")
+            else:
+                st.write("No technical conditions are currently active.")
+        else:
+            st.warning("Insufficient data to calculate indicator statistics.")
             
     else:
         st.error("Failed to fetch data. Please try different parameters.")
