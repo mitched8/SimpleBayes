@@ -533,6 +533,126 @@ def display_indicator_comparison(priors: dict, indicator_posteriors: dict, total
     
     return stats_df
 
+def calculate_pattern_posteriors(data: pd.DataFrame, pattern_params: dict) -> dict:
+    """Calculate Bayesian posteriors for each candlestick pattern"""
+    # Initialize pattern detectors with parameters
+    patterns = {
+        'doji': lambda d: detect_doji(d, threshold=pattern_params['doji_threshold']),
+        'hammer': lambda d: detect_hammer(d, min_body_ratio=pattern_params['hammer_ratio']),
+        'bullish_engulfing': lambda d: [date for date in detect_engulfing(d) 
+                                      if d.loc[date, 'Close'] > d.loc[date, 'Open']],
+        'bearish_engulfing': lambda d: [date for date in detect_engulfing(d) 
+                                      if d.loc[date, 'Close'] < d.loc[date, 'Open']],
+        'morning_star': detect_morning_star,
+        'evening_star': detect_evening_star,
+        'pin_bar': lambda d: detect_pin_bar(d, min_body_ratio=pattern_params['pin_ratio'])
+    }
+    
+    # Calculate forward returns
+    forward_returns = calculate_forward_returns(data)
+    
+    # Calculate posteriors for each pattern
+    posteriors = {}
+    for pattern_name, detector in patterns.items():
+        # Get pattern dates
+        pattern_dates = detector(data)
+        
+        if pattern_dates:  # Only if we have examples of this pattern
+            # Get returns following pattern occurrences
+            pattern_returns = []
+            for date in pattern_dates:
+                try:
+                    # Get the next available forward return
+                    next_return = forward_returns.loc[date, 'forward_5d']
+                    if pd.notna(next_return):
+                        pattern_returns.append(next_return)
+                except KeyError:
+                    continue
+            
+            if pattern_returns:
+                # Calculate distribution parameters
+                returns_array = np.array(pattern_returns)
+                mean = np.mean(returns_array)
+                std = np.std(returns_array)
+                
+                # Create posterior distribution
+                posteriors[pattern_name] = {
+                    'returns_mean': mean,
+                    'returns_std': std,
+                    'count': len(pattern_returns),
+                    'prob_positive': np.mean(returns_array > 0),
+                    'returns_dist': scipy.stats.norm(mean, std),
+                    'returns_ci_lower': mean - 1.96 * std,
+                    'returns_ci_upper': mean + 1.96 * std
+                }
+    
+    return posteriors
+
+def plot_signals_on_price(data: pd.DataFrame, signal_dates: List[pd.Timestamp], signal_name: str) -> go.Figure:
+    """Plot price chart with signal points highlighted"""
+    fig = go.Figure()
+    
+    # Add candlestick chart
+    fig.add_trace(go.Candlestick(
+        x=data.index,
+        open=data['Open'],
+        high=data['High'],
+        low=data['Low'],
+        close=data['Close'],
+        name='Price'
+    ))
+    
+    # Add signal points
+    if signal_dates:
+        signal_prices = [data.loc[date, 'Close'] for date in signal_dates]
+        fig.add_trace(go.Scatter(
+            x=signal_dates,
+            y=signal_prices,
+            mode='markers',
+            marker=dict(
+                size=10,
+                symbol='star',
+                color='red'
+            ),
+            name=f'{signal_name} Signals'
+        ))
+    
+    fig.update_layout(
+        title=f"Price Chart with {signal_name} Signals",
+        yaxis_title="Price",
+        xaxis_title="Date"
+    )
+    
+    return fig
+
+def get_technical_signal_dates(data: pd.DataFrame, signal_type: str, indicator_params: dict) -> List[pd.Timestamp]:
+    """Get dates when a specific technical signal was active"""
+    states = get_indicator_states(data, **indicator_params)
+    signal_mask = states.get(signal_type, pd.Series(False, index=data.index))
+    return data.index[signal_mask].tolist()
+
+def get_pattern_dates(data: pd.DataFrame, pattern_type: str, pattern_params: dict) -> List[pd.Timestamp]:
+    """Get dates when a specific pattern occurred"""
+    if pattern_type == 'doji':
+        dates = detect_doji(data, threshold=pattern_params['doji_threshold'])
+    elif pattern_type == 'hammer':
+        dates = detect_hammer(data, min_body_ratio=pattern_params['hammer_ratio'])
+    elif pattern_type == 'bullish_engulfing':
+        dates = [d for d in detect_engulfing(data) 
+                if data.loc[d, 'Close'] > data.loc[d, 'Open']]
+    elif pattern_type == 'bearish_engulfing':
+        dates = [d for d in detect_engulfing(data) 
+                if data.loc[d, 'Close'] < data.loc[d, 'Open']]
+    elif pattern_type == 'morning_star':
+        dates = detect_morning_star(data)
+    elif pattern_type == 'evening_star':
+        dates = detect_evening_star(data)
+    elif pattern_type == 'pin_bar':
+        dates = detect_pin_bar(data, min_body_ratio=pattern_params['pin_ratio'])
+    else:
+        dates = []
+    return dates
+
 def render_financial_markets():
     """
     Main function to render the financial markets analysis page.
@@ -578,7 +698,7 @@ def render_financial_markets():
         initial_data = fetch_market_data(
             symbol=selected_pair,
             timeframe=selected_timeframe,
-            start_date=date(2009, 1, 1),  # Use a very early date
+            start_date=datetime(2009, 1, 1).date(),  # Use datetime directly
             end_date=datetime.now().date()
         )
         
@@ -884,8 +1004,167 @@ def render_financial_markets():
                                f"Prob. Positive: {posterior['prob_positive']:.1%}")
             else:
                 st.write("No technical conditions are currently active.")
+            
+            # Add signal visualization
+            st.subheader("Technical Signal Visualization")
+            signal_options = list(indicator_posteriors.keys())
+            selected_signal = st.selectbox(
+                "Select Technical Signal to Visualize",
+                signal_options,
+                format_func=lambda x: x.replace('_', ' ').title()
+            )
+            
+            if selected_signal:
+                signal_dates = get_technical_signal_dates(full_data, selected_signal, indicator_params)
+                if signal_dates:
+                    st.plotly_chart(
+                        plot_signals_on_price(
+                            full_data,
+                            signal_dates,
+                            selected_signal.replace('_', ' ').title()
+                        ),
+                        use_container_width=True
+                    )
+                    st.write(f"Number of {selected_signal.replace('_', ' ').title()} signals found: {len(signal_dates)}")
+                else:
+                    st.write("No signals found for the selected indicator")
         else:
             st.warning("Insufficient data to calculate indicator statistics.")
+            
+        # Add Candlestick Pattern Analysis
+        st.header("Candlestick Pattern Analysis")
+        
+        # Pattern Parameters
+        st.subheader("Pattern Parameters")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Doji Parameters
+            st.write("**Doji Parameters**")
+            doji_threshold = st.slider(
+                "Doji Body/Shadow Ratio",
+                0.01,
+                0.2,
+                0.1,
+                0.01,
+                help="Maximum ratio of body to shadow length for Doji pattern"
+            )
+            
+            # Hammer Parameters
+            st.write("**Hammer Parameters**")
+            hammer_ratio = st.slider(
+                "Hammer Body Ratio",
+                0.1,
+                0.5,
+                0.3,
+                0.05,
+                help="Minimum ratio of body to total length for Hammer pattern"
+            )
+        
+        with col2:
+            # Pin Bar Parameters
+            st.write("**Pin Bar Parameters**")
+            pin_ratio = st.slider(
+                "Pin Bar Body Ratio",
+                0.1,
+                0.5,
+                0.3,
+                0.05,
+                help="Minimum ratio of body to total length for Pin Bar pattern"
+            )
+        
+        # Collect pattern parameters
+        pattern_params = {
+            'doji_threshold': doji_threshold,
+            'hammer_ratio': hammer_ratio,
+            'pin_ratio': pin_ratio
+        }
+        
+        # Calculate pattern-based posteriors
+        pattern_posteriors = calculate_pattern_posteriors(full_data, pattern_params)
+        
+        if pattern_posteriors:
+            # Display pattern statistics comparison
+            st.subheader("Candlestick Pattern Statistics Comparison")
+            st.write("Comparing returns distribution following different candlestick patterns:")
+            stats_df = display_indicator_comparison(priors, pattern_posteriors, total_periods)
+            st.table(stats_df)
+            
+            # Add interpretation
+            st.write("""
+            **Candlestick Pattern Statistics Interpretation:**
+            - Each column shows the return distribution following that pattern
+            - Compare the mean returns and probabilities across different patterns
+            - Higher observation counts indicate more frequent patterns
+            - Lower standard deviations suggest more reliable signals
+            - Patterns with extreme skewness may indicate strong directional moves
+            """)
+            
+            # Recent Pattern Analysis
+            st.subheader("Recent Pattern Analysis")
+            recent_data = full_data.iloc[-20:]  # Look at last 20 periods
+            
+            # Detect patterns in recent data
+            recent_patterns = []
+            for pattern_name in pattern_posteriors.keys():
+                if pattern_name == 'doji':
+                    dates = detect_doji(recent_data, threshold=pattern_params['doji_threshold'])
+                elif pattern_name == 'hammer':
+                    dates = detect_hammer(recent_data, min_body_ratio=pattern_params['hammer_ratio'])
+                elif pattern_name == 'bullish_engulfing':
+                    dates = [d for d in detect_engulfing(recent_data) 
+                           if recent_data.loc[d, 'Close'] > recent_data.loc[d, 'Open']]
+                elif pattern_name == 'bearish_engulfing':
+                    dates = [d for d in detect_engulfing(recent_data) 
+                           if recent_data.loc[d, 'Close'] < recent_data.loc[d, 'Open']]
+                elif pattern_name == 'morning_star':
+                    dates = detect_morning_star(recent_data)
+                elif pattern_name == 'evening_star':
+                    dates = detect_evening_star(recent_data)
+                else:  # pin_bar
+                    dates = detect_pin_bar(recent_data, min_body_ratio=pattern_params['pin_ratio'])
+                
+                if dates:
+                    recent_patterns.extend([(d, pattern_name) for d in dates])
+            
+            if recent_patterns:
+                st.write("**Recently Detected Patterns:**")
+                # Sort by date
+                recent_patterns.sort(key=lambda x: x[0])
+                for date, pattern in recent_patterns:
+                    pattern_stats = pattern_posteriors[pattern]
+                    st.write(f"- {pattern.replace('_', ' ').title()} on {date.strftime('%Y-%m-%d')}: "
+                           f"Mean: {pattern_stats['returns_mean']:.2%}, "
+                           f"Prob. Positive: {pattern_stats['prob_positive']:.1%}")
+            else:
+                st.write("No patterns detected in recent data.")
+            
+            # Add pattern visualization
+            st.subheader("Pattern Visualization")
+            pattern_options = list(pattern_posteriors.keys())
+            selected_pattern = st.selectbox(
+                "Select Pattern to Visualize",
+                pattern_options,
+                format_func=lambda x: x.replace('_', ' ').title()
+            )
+            
+            if selected_pattern:
+                pattern_dates = get_pattern_dates(full_data, selected_pattern, pattern_params)
+                if pattern_dates:
+                    st.plotly_chart(
+                        plot_signals_on_price(
+                            full_data,
+                            pattern_dates,
+                            selected_pattern.replace('_', ' ').title()
+                        ),
+                        use_container_width=True
+                    )
+                    st.write(f"Number of {selected_pattern.replace('_', ' ').title()} patterns found: {len(pattern_dates)}")
+                else:
+                    st.write("No patterns found for the selected type")
+        else:
+            st.warning("Insufficient data to calculate pattern statistics.")
             
     else:
         st.error("Failed to fetch data. Please try different parameters.")
