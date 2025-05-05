@@ -156,6 +156,16 @@ def calculate_posterior(priors: dict, likelihood: dict, x_range: np.ndarray) -> 
     positive_idx = x_range > 0
     posterior['prob_positive_return'] = np.trapz(posterior_returns[positive_idx], x_range[positive_idx])
     
+    # Add volatility data if it's in the priors
+    if 'volatility_data' in priors:
+        posterior['volatility_mean'] = priors['volatility_mean']
+        posterior['volatility_std'] = priors['volatility_std']
+        
+        # Store percentiles for volatility
+        posterior['volatility_low'] = np.percentile(priors['volatility_data'], 25)
+        posterior['volatility_median'] = np.percentile(priors['volatility_data'], 50)
+        posterior['volatility_high'] = np.percentile(priors['volatility_data'], 75)
+    
     return posterior
 
 def calculate_rolling_bayesian_analysis(data: pd.DataFrame, window_size: int, condition_func) -> tuple:
@@ -224,6 +234,17 @@ def volatility_condition(threshold: float):
     def condition(window: pd.DataFrame) -> bool:
         volatility = window['Returns'].std()
         return volatility >= threshold
+    return condition
+
+def volatility_level_condition(threshold_low: float, threshold_high: float):
+    """Create a condition function based on realized volatility level"""
+    def condition(window: pd.DataFrame) -> bool:
+        if 'Returns' not in window.columns:
+            window['Returns'] = window['Close'].pct_change()
+        
+        # Calculate realized volatility (annualized)
+        rv = window['Returns'].std() * np.sqrt(252)
+        return threshold_low <= rv <= threshold_high
     return condition
 
 def trend_condition(threshold: float):
@@ -653,6 +674,133 @@ def get_pattern_dates(data: pd.DataFrame, pattern_type: str, pattern_params: dic
         dates = []
     return dates
 
+def calculate_realized_volatility(returns: pd.Series, window: int = 20, annualize: bool = True) -> pd.Series:
+    """
+    Calculate realized volatility using rolling window
+    
+    Parameters:
+    -----------
+    returns : pd.Series
+        Series of returns
+    window : int
+        Rolling window size in days
+    annualize : bool
+        Whether to annualize the volatility
+    
+    Returns:
+    --------
+    pd.Series
+        Rolling realized volatility
+    """
+    # Calculate rolling variance
+    rolling_var = returns.rolling(window=window).var()
+    
+    # Annualize if requested (252 trading days in a year)
+    if annualize:
+        annualized_var = rolling_var * 252
+        realized_vol = np.sqrt(annualized_var)
+        return realized_vol
+    else:
+        return np.sqrt(rolling_var)
+
+def plot_realized_volatility(data: pd.DataFrame, window_sizes: List[int] = [20, 60, 120]) -> go.Figure:
+    """
+    Plot realized volatility for multiple rolling windows
+    
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        DataFrame with returns column
+    window_sizes : List[int]
+        List of rolling window sizes in days
+    
+    Returns:
+    --------
+    go.Figure
+        Plotly figure with realized volatility
+    """
+    if 'Returns' not in data.columns:
+        data['Returns'] = data['Close'].pct_change()
+    
+    fig = go.Figure()
+    
+    # Calculate and plot realized volatility for each window size
+    for window in window_sizes:
+        rv = calculate_realized_volatility(data['Returns'], window=window)
+        fig.add_trace(go.Scatter(
+            x=data.index,
+            y=rv,
+            name=f'{window}-day RV',
+            line=dict(width=2)
+        ))
+    
+    # Format the figure
+    fig.update_layout(
+        title='Realized Volatility (Annualized)',
+        xaxis_title='Date',
+        yaxis_title='Volatility',
+        yaxis_tickformat='.1%',
+        legend_title='Window Size',
+        hovermode='x unified'
+    )
+    
+    return fig
+
+def plot_volatility_with_conditions(data: pd.DataFrame, similar_periods_mask: np.ndarray, window_size: int = 20) -> go.Figure:
+    """Plot realized volatility with highlighted similar periods"""
+    # Calculate realized volatility
+    if 'Returns' not in data.columns:
+        data['Returns'] = data['Close'].pct_change()
+    
+    realized_vol = calculate_realized_volatility(data['Returns'], window=window_size)
+    
+    fig = go.Figure()
+    
+    # Plot full volatility series
+    fig.add_trace(go.Scatter(
+        x=data.index,
+        y=realized_vol,
+        name='Realized Volatility',
+        line=dict(color='gray', width=1)
+    ))
+    
+    # Plot similar periods
+    similar_data = data[similar_periods_mask].copy()
+    if len(similar_data) > 0:
+        # Get realized vol for similar periods
+        similar_vol = realized_vol[similar_periods_mask]
+        
+        fig.add_trace(go.Scatter(
+            x=similar_data.index,
+            y=similar_vol,
+            name='Similar Periods',
+            mode='markers',
+            marker=dict(
+                color='red',
+                size=6,
+                symbol='circle'
+            )
+        ))
+    
+    # Add horizontal lines for percentiles
+    vol_25 = realized_vol.quantile(0.25)
+    vol_50 = realized_vol.quantile(0.50)
+    vol_75 = realized_vol.quantile(0.75)
+    
+    fig.add_hline(y=vol_25, line_dash="dash", line_color="blue", annotation_text="25th %")
+    fig.add_hline(y=vol_50, line_dash="dash", line_color="green", annotation_text="Median")
+    fig.add_hline(y=vol_75, line_dash="dash", line_color="orange", annotation_text="75th %")
+    
+    fig.update_layout(
+        title=f"Realized Volatility ({window_size}-day) with Similar Periods Highlighted",
+        xaxis_title="Date",
+        yaxis_title="Annualized Volatility",
+        yaxis_tickformat='.1%',
+        showlegend=True
+    )
+    
+    return fig
+
 def render_financial_markets():
     """
     Main function to render the financial markets analysis page.
@@ -799,20 +947,43 @@ def render_financial_markets():
             
             condition_type = st.selectbox(
                 "Condition Type",
-                ["Weekly Return", "Volatility", "Trend"],
+                ["Weekly Return", "Volatility", "Trend", "Realized Volatility"],
                 help="Type of condition to identify similar market periods"
             )
         
         with col2:
-            threshold = st.slider(
-                "Condition Threshold",
-                min_value=0.0,
-                max_value=0.1,
-                value=0.02,
-                step=0.005,
-                format="%.3f",
-                help="Threshold for the selected condition"
-            )
+            if condition_type == "Realized Volatility":
+                vol_threshold_low = st.slider(
+                    "Volatility Range (Low)",
+                    min_value=0.0,
+                    max_value=0.5,
+                    value=0.05,
+                    step=0.01,
+                    format="%.2f",
+                    help="Lower bound for realized volatility (annualized)"
+                )
+                
+                vol_threshold_high = st.slider(
+                    "Volatility Range (High)",
+                    min_value=vol_threshold_low + 0.01,
+                    max_value=0.5,
+                    value=min(vol_threshold_low + 0.1, 0.5),
+                    step=0.01,
+                    format="%.2f",
+                    help="Upper bound for realized volatility (annualized)"
+                )
+                
+                threshold = None  # Not used for volatility range
+            else:
+                threshold = st.slider(
+                    "Condition Threshold",
+                    min_value=0.0,
+                    max_value=0.1,
+                    value=0.02,
+                    step=0.005,
+                    format="%.3f",
+                    help="Threshold for the selected condition"
+                )
         
         # Create condition function based on user selection
         if condition_type == "Weekly Return":
@@ -821,6 +992,9 @@ def render_financial_markets():
         elif condition_type == "Volatility":
             condition_func = volatility_condition(threshold)
             condition_description = f"Periods with volatility >= {threshold:.1%}"
+        elif condition_type == "Realized Volatility":
+            condition_func = volatility_level_condition(vol_threshold_low, vol_threshold_high)
+            condition_description = f"Periods with realized volatility between {vol_threshold_low:.1%} and {vol_threshold_high:.1%}"
         else:  # Trend
             condition_func = trend_condition(threshold)
             condition_description = f"Periods with trend strength >= {threshold:.1%}"
@@ -845,12 +1019,16 @@ def render_financial_markets():
                 with col1:
                     st.subheader("Historical Priors")
                     st.write(f"Mean Return: {priors['returns_mean']:.4%}")
-                    st.write(f"Volatility: {priors['returns_std']:.4%}")
+                    st.write(f"Return Volatility: {priors['returns_std']:.4%}")
+                    if 'volatility_mean' in priors:
+                        st.write(f"Mean Realized Vol: {priors['volatility_mean']:.4%}")
                 
                 with col2:
                     st.subheader("Recent Window")
                     st.write(f"Mean Return: {likelihood['returns_mean']:.4%}")
-                    st.write(f"Volatility: {likelihood['returns_std']:.4%}")
+                    st.write(f"Return Volatility: {likelihood['returns_std']:.4%}")
+                    if 'volatility_mean' in likelihood:
+                        st.write(f"Recent Realized Vol: {likelihood['volatility_mean']:.4%}")
                 
                 with col3:
                     st.subheader("Posterior Estimates")
@@ -859,15 +1037,66 @@ def render_financial_markets():
                     st.write(f"[{posterior['returns_ci_lower']:.4%}, {posterior['returns_ci_upper']:.4%}]")
                     st.write(f"Prob. Positive: {posterior['prob_positive_return']:.1%}")
                 
+                # Add volatility analysis section if we have the data
+                if 'volatility_mean' in posterior:
+                    st.subheader("Volatility Analysis")
+                    vol_col1, vol_col2, vol_col3 = st.columns(3)
+                    
+                    with vol_col1:
+                        st.write("**Historical Volatility Stats**")
+                        st.write(f"Mean: {posterior['volatility_mean']:.4%}")
+                        st.write(f"Std Dev: {posterior['volatility_std']:.4%}")
+                    
+                    with vol_col2:
+                        st.write("**Volatility Percentiles**")
+                        st.write(f"25th: {posterior['volatility_low']:.4%}")
+                        st.write(f"50th: {posterior['volatility_median']:.4%}")
+                        st.write(f"75th: {posterior['volatility_high']:.4%}")
+                    
+                    with vol_col3:
+                        st.write("**Volatility Prediction**")
+                        # Determine volatility prediction based on recent volatility vs historical
+                        if 'volatility_mean' in likelihood:
+                            vol_ratio = likelihood['volatility_mean'] / posterior['volatility_mean']
+                            
+                            if vol_ratio < 0.8:
+                                vol_pred = "Decreasing"
+                                vol_color = "green"
+                            elif vol_ratio > 1.2:
+                                vol_pred = "Increasing"
+                                vol_color = "red"
+                            else:
+                                vol_pred = "Stable"
+                                vol_color = "orange"
+                            
+                            st.markdown(f"Trend: <span style='color:{vol_color};font-weight:bold'>{vol_pred}</span>", unsafe_allow_html=True)
+                            st.write(f"Vol Ratio: {vol_ratio:.2f}x")
+                
                 # Plot distributions
                 st.plotly_chart(plot_distributions(priors, likelihood, posterior))
                 
                 # Plot time series with similar periods
                 st.plotly_chart(plot_time_series_with_conditions(full_data, similar_periods_mask))
                 
+                # Add volatility analysis plots
+                if 'volatility_mean' in posterior and similar_periods_mask is not None:
+                    st.subheader("Volatility Regime Analysis")
+                    
+                    # Plot realized volatility with similar periods highlighted
+                    vol_plot = plot_volatility_with_conditions(full_data, similar_periods_mask, window_size=20)
+                    st.plotly_chart(vol_plot, use_container_width=True)
+                    
+                    # Additional analysis for condition based on realized volatility
+                    if condition_type == "Realized Volatility":
+                        st.write(f"""
+                        **Volatility Regime Interpretation:**
+                        - You've selected periods with realized volatility between {vol_threshold_low:.1%} and {vol_threshold_high:.1%}
+                        - This regime represents {similar_periods_count/total_periods:.1%} of historical data
+                        - In this volatility regime, expected returns are {posterior['returns_mean']:.2%} with {posterior['prob_positive_return']:.1%} probability of positive returns
+                        """)
+                
                 # Display detailed statistics comparison
                 st.subheader("Distribution Statistics Comparison")
-                st.write("Comparing the prior and posterior distributions:")
                 stats_df = display_distribution_comparison(priors, posterior, similar_periods_count, total_periods)
                 st.table(stats_df)
                 
@@ -890,17 +1119,73 @@ def render_financial_markets():
                 if posterior['returns_mean'] > 0:
                     if posterior['prob_positive_return'] > 0.75:
                         signal = "Strong Buy"
+                        signal_color = "green"
                     else:
                         signal = "Weak Buy"
+                        signal_color = "lightgreen"
                 else:
                     if posterior['prob_positive_return'] < 0.25:
                         signal = "Strong Sell"
+                        signal_color = "red"
                     else:
                         signal = "Weak Sell"
+                        signal_color = "pink"
                 
-                st.write(f"Signal: {signal}")
+                st.markdown(f"Signal: <span style='color:{signal_color};font-weight:bold'>{signal}</span>", unsafe_allow_html=True)
                 st.write(f"Signal Strength: {signal_strength:.2f}")
                 st.write(f"Probability of Positive Return: {posterior['prob_positive_return']:.1%}")
+                
+                # Add volatility-adjusted metrics
+                if 'volatility_mean' in posterior:
+                    st.subheader("Volatility-Adjusted Metrics")
+                    
+                    # Calculate Sharpe ratio (expected return / volatility)
+                    sharpe = posterior['returns_mean'] / posterior['volatility_mean']
+                    
+                    # Calculate risk-adjusted return (Sortino-like: expected return / downside vol)
+                    if 'returns_data' in priors:
+                        downside_returns = priors['returns_data'][priors['returns_data'] < 0]
+                        if len(downside_returns) > 0:
+                            downside_vol = downside_returns.std() * np.sqrt(252)
+                            sortino = posterior['returns_mean'] / downside_vol
+                        else:
+                            sortino = None
+                    else:
+                        sortino = None
+                    
+                    st.write(f"Sharpe Ratio (annualized): {sharpe:.2f}")
+                    if sortino is not None:
+                        st.write(f"Sortino Ratio (annualized): {sortino:.2f}")
+                    
+                    # Calculate volatility-adjusted position sizing
+                    target_vol = 0.15  # 15% target portfolio volatility
+                    position_sizing = target_vol / posterior['volatility_mean']
+                    
+                    st.write(f"Suggested Position Size: {min(position_sizing, 1.0):.2f}x (based on {target_vol:.0%} target volatility)")
+                    
+                    # Create a risk-reward chart
+                    st.subheader("Risk-Reward Analysis")
+                    
+                    if 'returns_ci_lower' in posterior and 'returns_ci_upper' in posterior:
+                        risk_reward_ratio = abs(posterior['returns_mean'] / posterior['returns_ci_lower'])
+                        
+                        st.write(f"""
+                        **Risk-Reward Metrics:**
+                        - Expected Return: {posterior['returns_mean']:.2%}
+                        - Downside Risk (95% CI): {posterior['returns_ci_lower']:.2%}
+                        - Upside Potential (95% CI): {posterior['returns_ci_upper']:.2%}
+                        - Risk-Reward Ratio: {risk_reward_ratio:.2f}
+                        """)
+                        
+                        # Only show trade recommendation if we have risk-reward data
+                        st.write("**Trade Recommendation**")
+                        
+                        if posterior['returns_mean'] > 0 and risk_reward_ratio > 1.5:
+                            st.markdown("<span style='color:green;font-weight:bold'>✅ Favorable risk-reward for long position</span>", unsafe_allow_html=True)
+                        elif posterior['returns_mean'] < 0 and risk_reward_ratio > 1.5:
+                            st.markdown("<span style='color:green;font-weight:bold'>✅ Favorable risk-reward for short position</span>", unsafe_allow_html=True)
+                        else:
+                            st.markdown("<span style='color:red;font-weight:bold'>❌ Unfavorable risk-reward ratio</span>", unsafe_allow_html=True)
             else:
                 st.warning("No similar periods found with the current conditions. Try adjusting the threshold.")
         else:
@@ -1165,6 +1450,128 @@ def render_financial_markets():
                     st.write("No patterns found for the selected type")
         else:
             st.warning("Insufficient data to calculate pattern statistics.")
+        
+        # Add Realized Volatility Analysis
+        st.header("Realized Volatility Analysis")
+        
+        # Volatility Parameters
+        st.subheader("Volatility Parameters")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            primary_window = st.slider(
+                "Primary Window Size (days)",
+                min_value=5,
+                max_value=252,
+                value=20,
+                step=5,
+                help="Primary rolling window size for realized volatility calculation"
+            )
+            
+            show_multiple_windows = st.checkbox(
+                "Show Multiple Windows",
+                value=True,
+                help="Show realized volatility for multiple window sizes"
+            )
+        
+        with col2:
+            if show_multiple_windows:
+                secondary_window = st.slider(
+                    "Secondary Window Size (days)",
+                    min_value=5,
+                    max_value=252,
+                    value=60,
+                    step=5,
+                    help="Secondary rolling window size for comparison"
+                )
+                
+                tertiary_window = st.slider(
+                    "Tertiary Window Size (days)",
+                    min_value=5,
+                    max_value=252,
+                    value=120,
+                    step=5,
+                    help="Tertiary rolling window size for comparison"
+                )
+                
+                window_sizes = [primary_window, secondary_window, tertiary_window]
+            else:
+                window_sizes = [primary_window]
+        
+        # Calculate and display realized volatility
+        if 'Returns' not in full_data.columns:
+            full_data['Returns'] = full_data['Close'].pct_change()
+        
+        # Calculate primary realized volatility
+        rv = calculate_realized_volatility(full_data['Returns'], window=primary_window)
+        
+        # Display current realized volatility
+        current_rv = rv.iloc[-1]
+        st.subheader(f"Current {primary_window}-day Realized Volatility")
+        st.write(f"**{current_rv:.2%}** (annualized)")
+        
+        # Display realized volatility stats
+        st.subheader("Realized Volatility Statistics")
+        
+        rv_stats = pd.DataFrame({
+            'Statistic': ['Current', 'Mean', 'Median', 'Min', 'Max', 'Std Dev', '25th Percentile', '75th Percentile'],
+            'Value': [
+                f"{current_rv:.2%}",
+                f"{rv.mean():.2%}",
+                f"{rv.median():.2%}",
+                f"{rv.min():.2%}",
+                f"{rv.max():.2%}",
+                f"{rv.std():.2%}",
+                f"{rv.quantile(0.25):.2%}",
+                f"{rv.quantile(0.75):.2%}"
+            ]
+        })
+        
+        st.table(rv_stats)
+        
+        # Plot realized volatility
+        st.subheader("Realized Volatility Time Series")
+        st.plotly_chart(
+            plot_realized_volatility(full_data, window_sizes),
+            use_container_width=True
+        )
+        
+        # Add explanation
+        st.write("""
+        **Realized Volatility Explanation:**
+        - Calculated as the rolling standard deviation of daily returns
+        - Annualized by multiplying by √252 (square root of trading days in a year)
+        - Higher values indicate more market turbulence
+        - Comparing different window sizes helps identify short vs. long-term volatility regimes
+        """)
+        
+        # Add volatility regime analysis
+        st.subheader("Volatility Regime Analysis")
+        
+        # Define volatility regimes based on percentiles
+        low_threshold = rv.quantile(0.25)
+        high_threshold = rv.quantile(0.75)
+        
+        if current_rv < low_threshold:
+            regime = "Low Volatility"
+            regime_color = "green"
+        elif current_rv > high_threshold:
+            regime = "High Volatility"
+            regime_color = "red"
+        else:
+            regime = "Normal Volatility"
+            regime_color = "orange"
+        
+        st.markdown(f"Current Regime: <span style='color:{regime_color};font-weight:bold'>{regime}</span>", unsafe_allow_html=True)
+        
+        # Display regime thresholds
+        st.write(f"Low Volatility Threshold: {low_threshold:.2%}")
+        st.write(f"High Volatility Threshold: {high_threshold:.2%}")
+        
+        # Calculate volatility percentile
+        percentile = (rv < current_rv).mean() * 100
+        st.write(f"Current Volatility Percentile: {percentile:.1f}%")
             
     else:
         st.error("Failed to fetch data. Please try different parameters.")
